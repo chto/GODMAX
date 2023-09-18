@@ -6,7 +6,7 @@ import numpy as np
 from jax import vmap, grad
 from jax_cosmo import Cosmology
 from functools import partial
-from jax_cosmo.power import linear_matter_power
+from jax_cosmo.power import linear_matter_power, nonlinear_matter_power
 from jax_cosmo.background import angular_diameter_distance, radial_comoving_distance
 import jax_cosmo.transfer as tklib
 import astropy.units as u
@@ -23,6 +23,7 @@ import jax_cosmo.transfer as tklib
 from jax_cosmo.scipy.integrate import romb
 from jax_cosmo.scipy.integrate import simps
 from jax_cosmo.scipy.interpolate import interp
+from mcfit import SphericalBessel
 
 
 class setup_power_BCMP:
@@ -54,6 +55,7 @@ class setup_power_BCMP:
         if BCMP_obj is None:
             BCMP_obj = BCM_18_wP(sim_params_dict, halo_params_dict, num_points_trapz_int=num_points_trapz_int)
         self.Mtot_mat = BCMP_obj.Mtot_mat
+        self.BCMP_obj=BCMP_obj
         Mtot_rep = jnp.repeat(self.Mtot_mat[None, :, :, :], len(BCMP_obj.r_array), axis=0)
         self.r_array = BCMP_obj.r_array
         self.M_array = BCMP_obj.M200c_array
@@ -67,8 +69,9 @@ class setup_power_BCMP:
         self.sig_logc_z_array = jnp.array(halo_params_dict['sig_logc_z_array'])
         self.beam_fwhm_arcmin = sim_params_dict['beam_fwhm_arcmin']        
 
-        self.kPk_array = jnp.logspace(jnp.log10(1E-3), jnp.log10(100), 64)
+        self.kPk_array = jnp.logspace(jnp.log10(1E-3), jnp.log10(100), 128)
         self.plin_kz_mat = vmap(linear_matter_power,(None, None, 0))(self.cosmo_jax, self.kPk_array, self.scale_fac_a_array).T
+        self.pnonlin_kz_mat = vmap(nonlinear_matter_power,(None, None, 0))(self.cosmo_jax, self.kPk_array, self.scale_fac_a_array).T
 
 
         self.chi_array = radial_comoving_distance(self.cosmo_jax, self.scale_fac_a_array)
@@ -138,9 +141,11 @@ class setup_power_BCMP:
         c = const.c
         coeff = sigmat / (m_e * (c ** 2))
         oneMpc_h = (((10 ** 6) / self.cosmo_jax.h) * (u.pc).to(u.m)) * (u.m)
-        const_coeff = ((coeff * oneMpc_h).to(((u.cm ** 3) / u.eV))).value
-        Pe_conv_fac =  0.518
-        self.y3d_mat = Pe_conv_fac * const_coeff * BCMP_obj.Pth_mat
+        self.const_coeff = ((coeff * oneMpc_h).to(((u.cm ** 3) / u.eV))).value
+        Y=0.24
+        self.Pe_conv_fac =  (4-2*Y)/(8-5*Y)
+        self.y3d_mat = self.Pe_conv_fac * self.const_coeff * BCMP_obj.Pth_mat
+        self.ycl = self.get_ycl()
 
         ellmin, ellmax, nell = halo_params_dict['ellmin'], halo_params_dict['ellmax'], halo_params_dict['nell']
         self.ell_array = jnp.logspace(jnp.log10(ellmin), jnp.log10(ellmax), nell)
@@ -155,6 +160,11 @@ class setup_power_BCMP:
         vmap_func1 = vmap(self.get_byl, (0, None))
         vmap_func2 = vmap(vmap_func1, (None, 0))
         self.byl_mat = vmap_func2(jnp.arange(nell), jnp.arange(self.nz)).T
+
+
+        vmap_func1 = vmap(self.get_bh, (0, None))
+        vmap_func2 = vmap(vmap_func1, (None, 0))
+        self.bh = vmap_func2(jnp.arange(self.nz), jnp.arange(self.nM)).T
 
         vmap_func1 = vmap(self.get_ukappal_dmb_prefac, (0, None, None, None))
         vmap_func2 = vmap(vmap_func1, (None, 0, None, None))
@@ -173,6 +183,11 @@ class setup_power_BCMP:
         self.Pklin_lz_mat = vmap_func2(jnp.arange(nell), jnp.arange(self.nz)).T
 
 
+        vmap_func1 = vmap(self.get_Pknonlin_lz, (0, None))
+        vmap_func2 = vmap(vmap_func1, (None, 0))
+        self.Pknonlin_lz_mat = vmap_func2(jnp.arange(nell), jnp.arange(self.nz)).T
+
+
 
     def get_rho_m(self, z):
         return (constants.RHO_CRIT_0_KPC3 * self.cosmo_params['Om0'] * (1.0 + z)**3) * 1E9
@@ -186,21 +201,74 @@ class setup_power_BCMP:
     def get_rho_c(self, z):
         return constants.RHO_CRIT_0_KPC3 * self.get_Ez(z)**2  * 1E9    
 
-    @partial(jit, static_argnums=(0,))        
+    #@partial(jit, static_argnums=(1,))        
     def get_uknfw_from_rho(self, jk):
+        """
+        from tqdm import tqdm
         k = self.kPk_array[jk]
         prefac = 4 * jnp.pi * (self.r_array**3) * (jnp.sin(k*self.r_array) / (k*self.r_array))
         prefac_repeat_shape = jnp.tile(prefac.reshape(self.nr,1,1,1), (1,self.nc,self.nz,self.nM))
         uk = jnp.trapz(prefac_repeat_shape * self.rho_nfw_normed_M, jnp.log(self.r_array), axis=0)
         return uk
+        uk=[]
+        print(self.rho_nfw_normed_M.shape, len(self.r_array))
+        shape =  self.rho_nfw_normed_M.shape
+        inarr =  (prefac_repeat_shape*self.rho_nfw_normed_M).reshape(shape[0], -1)
+        for i in tqdm(range(len(inarr[0]))):
+            def int_uk(logr):
+                return jnp.interp(logr, jnp.log(self.r_array), inarr[:,i])
+            uk.append(romb(int_uk, jnp.log(self.r_array[0]), jnp.log(self.r_array[-1]), divmax=7))
+        print(jnp.array(uk).shape)
+        uk = jnp.array(uk).reshape(shape[1], shape[2], shape[3])
+        """
+        k = self.kPk_array[jk]
+        prefac = 4 * jnp.pi*jnp.sqrt(jnp.pi/2)*jnp.ones_like(self.r_array) 
+        prefac_repeat_shape = jnp.tile(prefac.reshape(self.nr,1,1,1), (1,self.nc,self.nz,self.nM))
+        shape =  self.rho_nfw_normed_M.shape
+        inarr =  (prefac_repeat_shape*self.rho_nfw_normed_M).reshape(shape[0], -1)
+        H = SphericalBessel(self.r_array,lowring=True, backend="jax")
+        y, G = H(inarr.T, extrap=False)
+        yreturn = []
+        for i in range(len(inarr[0])):
+            yreturn.append(jnp.interp(k, y, G[i]))
+        yreturn = jnp.array(yreturn).reshape(shape[1], shape[2], shape[3])
 
-    @partial(jit, static_argnums=(0,))        
+        return yreturn
+
+    #@partial(jit, static_argnums=(0,))        
     def get_ukdmb_from_rho(self, jk):
+        """
         k = self.kPk_array[jk]
         prefac = 4 * jnp.pi * (self.r_array**3) * (jnp.sin(k*self.r_array) / (k*self.r_array))
         prefac_repeat_shape = jnp.tile(prefac.reshape(self.nr,1,1,1), (1,self.nc,self.nz,self.nM))
         uk = jnp.trapz(prefac_repeat_shape * self.rho_dmb_normed_M, jnp.log(self.r_array), axis=0)
-        return uk
+        uk=[]
+        shape = self.rho_nfw_normed_M.shape
+        inarr = (prefac_repeat_shape *self.rho_dmb_normed_M).reshape(self.rho_dmb_normed_M.shape[0], -1)
+        for i in range(len(inarr[0])):
+            def int_uk(logr):
+                return jnp.interp(logr, jnp.log(self.r_array), inarr[:,i])
+            uk.append(romb(int_uk, jnp.log(self.r_array[0]), jnp.log(self.r_array[-1]), divmax=7))
+        uk = jnp.array(uk).reshape(shape[1], shape[2], shape[3])
+        """
+
+        k = self.kPk_array[jk]
+        prefac = 4 * jnp.pi*jnp.sqrt(jnp.pi/2)*jnp.ones_like(self.r_array) 
+        prefac_repeat_shape = jnp.tile(prefac.reshape(self.nr,1,1,1), (1,self.nc,self.nz,self.nM))
+        shape =  self.rho_dmb_normed_M.shape
+        inarr =  (prefac_repeat_shape*self.rho_dmb_normed_M).reshape(shape[0], -1)
+        H = SphericalBessel(self.r_array,lowring=True, backend="jax")
+        y, G = H(inarr.T, extrap=False)
+        yreturn = []
+        for i in range(len(inarr[0])):
+            yreturn.append(jnp.interp(k, y, G[i]))
+        yreturn = jnp.array(yreturn).reshape(shape[1], shape[2], shape[3])
+
+        return yreturn
+
+
+
+        #return uk
 
 
     @partial(jit, static_argnums=(0,))        
@@ -235,32 +303,36 @@ class setup_power_BCMP:
 
     @partial(jit, static_argnums=(0,))
     def get_fsigma_Mz(self, jz, jM, mdef_delta=200):
-        '''Tinker 2008 mass function'''
+        '''Tinker 2010 mass function'''
         sigma = self.sigma_Mz_mat[jz, jM]
+        delta_c = constants.DELTA_COLLAPSE
+        nu = delta_c / sigma
         z = self.z_array[jz]
         rho_treshold = mdef_delta * self.get_rho_c(z)
         Delta_m = round(rho_treshold / self.get_rho_m(z))
-
         fit_Delta = jnp.array([200, 300, 400, 600, 800, 1200, 1600, 2400, 3200])
-        fit_A0 = jnp.array([0.186, 0.200, 0.212, 0.218, 0.248, 0.255, 0.260, 0.260, 0.260])
-        fit_a0 = jnp.array([1.47, 1.52, 1.56, 1.61, 1.87, 2.13, 2.30, 2.53, 2.66])
-        fit_b0 = jnp.array([2.57, 2.25, 2.05, 1.87, 1.59, 1.51, 1.46, 1.44, 1.41])
-        fit_c0 = jnp.array([1.19, 1.27, 1.34, 1.45, 1.58, 1.80, 1.97, 2.24, 2.44])
-            
-        
-        A0 = jnp.interp(Delta_m, fit_Delta, fit_A0)
-        a0 = jnp.interp(Delta_m, fit_Delta, fit_a0)
-        b0 = jnp.interp(Delta_m, fit_Delta, fit_b0)
-        c0 = jnp.interp(Delta_m, fit_Delta, fit_c0)
-        
-        alpha = 10**(-(0.75 / jnp.log10(Delta_m / 75.0))**1.2)
-        A = A0 * (1.0 + z)**-0.14
-        a = a0 * (1.0 + z)**-0.06
-        b = b0 * (1.0 + z)**-alpha
-        c = c0
-        f = A * ((sigma / b)**-a + 1.0) * jnp.exp(-c / sigma**2)
-        
-        return f
+        fit_alpha = jnp.array([0.368, 0.363, 0.385, 0.389, 0.393, 0.365, 0.379, 0.355, 0.327])
+        fit_beta = jnp.array([0.589, 0.585, 0.544, 0.543, 0.564, 0.623, 0.637, 0.673, 0.702])
+        fit_gamma =  jnp.array([0.864, 0.922, 0.987, 1.09, 1.20, 1.34, 1.50, 1.68, 1.81])
+        fit_phi = jnp.array([-0.729, -0.789, -0.910, -1.05, -1.20, -1.26, -1.45, -1.50, -1.49])
+        fit_eta = jnp.array([-0.243, -0.261, -0.261, -0.273, -0.278, -0.301, -0.301, -0.319, -0.336])
+        alpha = jnp.interp(Delta_m, fit_Delta, fit_alpha)
+        beta = jnp.interp(Delta_m, fit_Delta, fit_beta)
+        gamma = jnp.interp(Delta_m, fit_Delta, fit_gamma)
+        phi = jnp.interp(Delta_m, fit_Delta, fit_phi)
+        eta = jnp.interp(Delta_m, fit_Delta, fit_eta)
+
+
+        beta = beta*(1+z)**0.2
+        phi = phi*(1+z)**(-0.08)
+        eta = eta*(1+z)**0.27
+        gamma = gamma*(1+z)**(-0.01)
+        fnu= alpha*(1+(beta*nu)**(-2.0*phi))*nu**(2*eta)*jnp.exp(-gamma*nu**2/2)
+        return nu*fnu
+
+
+
+
     
     @partial(jit, static_argnums=(0,))
     def get_bias_Mz(self, jz, jM, mdef_delta=200):
@@ -343,12 +415,29 @@ class setup_power_BCMP:
         return byl
 
     @partial(jit, static_argnums=(0,))
+    def get_bh(self, jz, jm):
+        dndlnM_z = self.hmf_Mz_mat[jz, jm]
+        bM_z = self.bias_Mz_mat[jz, jm]
+        fx = dndlnM_z * bM_z/jnp.trapz(self.hmf_Mz_mat[:, jm], self.z_array)
+        return fx
+
+
+    @partial(jit, static_argnums=(0,))
     def get_Pklin_lz(self, jl, jz):
         ell = self.ell_array[jl]
         chi_z = self.chi_array[jz]
         k_ell = (ell + 0.5)/jnp.clip(chi_z, 1.0)
         Pkz_ell = jnp.exp(jnp.interp(jnp.log(k_ell), jnp.log(self.kPk_array), jnp.log(self.plin_kz_mat[:,jz])))
         return Pkz_ell
+
+    @partial(jit, static_argnums=(0,))
+    def get_Pknonlin_lz(self, jl, jz):
+        ell = self.ell_array[jl]
+        chi_z = self.chi_array[jz]
+        k_ell = (ell + 0.5)/jnp.clip(chi_z, 1.0)
+        Pkz_ell = jnp.exp(jnp.interp(jnp.log(k_ell), jnp.log(self.kPk_array), jnp.log(self.pnonlin_kz_mat[:,jz])))
+        return Pkz_ell
+
 
 
     @partial(jit, static_argnums=(0,))
@@ -417,5 +506,50 @@ class setup_power_BCMP:
         fx = ukz_intc * dndlnM_z * ((1/rhom_z)**2)
         Pmm_1h = jnp.trapz(fx, x=jnp.log(self.M_array))
         return Pmm_1h
+
+
+
+    def get_ycl(self, do3D=False):
+        """
+        Get y500 for cluster
+        Out [nz, nM, nc] 
+        """
+
+        coeff = self.const_coeff
+        shape = self.BCMP_obj.Pth_mat.shape
+        result  = []
+        Pe_conv_fac = self.Pe_conv_fac
+        for i in range(shape[1]):
+            for j in range(shape[2]):
+                for k in range(shape[3]):
+                    c = self.conc_array[i]
+                    z = self.z_array[j]
+                    m = self.M_array[k]
+                    def integrand_3d(r_prime):
+                        dndz = (jnp.interp(r_prime,  self.r_array, (Pe_conv_fac*self.BCMP_obj.Pth_mat)[:, i, j, k]*(self.r_array**2)))
+                        return dndz
+                
+                    def integrand(r_prime):
+                        invalue = (Pe_conv_fac*self.BCMP_obj.Pth_mat)[:, i, j, k]*jnp.sqrt(self.r_array**2-R500c**2)*self.r_array
+                        invalue = invalue.at[indx].set(0)
+                        dndz = jnp.interp(r_prime,  self.r_array, invalue)
+                        return dndz
+                    R500c = self.BCMP_obj.r500c_mat[k,j]
+                    indx = jnp.where(self.r_array<=1.0001*R500c)
+                    if do3D:
+                        radial_kernel = simps(integrand_3d, 0, R500c, 128)*coeff*4*jnp.pi/self.DA_array[j]**2
+                    else: 
+                        radial_kernel = simps(integrand_3d, 0, 5*R500c, 128)*coeff*4*jnp.pi/self.DA_array[j]**2-simps(integrand, 1.0001*R500c, 5*R500c, 128)*coeff*4*jnp.pi/self.DA_array[j]**2
+                    result.append(radial_kernel)
+                    if jnp.isnan(result[-1]):
+                        assert(0)
+
+                                
+        result=jnp.array(result)
+        result = result.reshape(shape[1],shape[2],shape[3])
+        result=jnp.moveaxis(result.T,0,1 )
+        return result
+
+        
 
 

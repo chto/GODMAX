@@ -16,6 +16,8 @@ import time
 import scipy.special
 from jax import custom_jvp, pure_callback, vmap
 import jax
+from jax_cosmo.scipy.integrate import romb
+from jax_cosmo.scipy.interpolate import interp
 # see https://github.com/google/jax/issues/11002
 
 def generate_bessel(function):
@@ -80,6 +82,7 @@ class get_corrfunc_BCMP:
             ti = time.time()
         if get_power_BCMP_obj is None:
             get_power_BCMP_obj = get_power_BCMP(sim_params_dict, halo_params_dict, analysis_dict, num_points_trapz_int=num_points_trapz_int, setup_power_BCMP_obj=setup_power_BCMP_obj, verbose_time=verbose_time)
+            self.get_power_BCMP_obj = get_power_BCMP_obj
         if verbose_time:
             print('Time for setup_power_BCMP: ', time.time() - ti)
             ti = time.time()
@@ -96,46 +99,101 @@ class get_corrfunc_BCMP:
             if verbose_time:
                 ti = time.time()
 
+
             self.gty_1h_out_mat = vmap(self.get_Hankel_gty_1h)(jnp.arange(len(self.angles_data_array)))
             self.gty_2h_out_mat = vmap(self.get_Hankel_gty_2h)(jnp.arange(len(self.angles_data_array)))            
             self.gty_out_mat = self.gty_1h_out_mat + self.gty_2h_out_mat
+            if verbose_time:
+                print('Time for gty Hankel transform: ', time.time() - ti)
+                ti = time.time()
+
+        if analysis_dict['do_shearh']:
+            self.Cl_kappa_h_1h = get_power_BCMP_obj.Cl_kappa_M_1h_mat
+            self.Cl_kappa_h_2h = get_power_BCMP_obj.Cl_kappa_M_2h_mat
+
+            if verbose_time:
+                ti = time.time()
+
+            self.gth_1h_out_mat = vmap(self.get_Hankel_gth_1h)(jnp.arange(len(self.angles_data_array)))
+            self.gth_2h_out_mat = vmap(self.get_Hankel_gth_2h)(jnp.arange(len(self.angles_data_array)))            
+            self.gth_out_mat = self.gth_1h_out_mat + self.gth_2h_out_mat
+            if verbose_time:
+                print('Time for gth Hankel transform: ', time.time() - ti)
+                ti = time.time()
+
+        if analysis_dict['do_shearh_DM']:
+            self.Cl_kappa_h_1h_DM = get_power_BCMP_obj.Cl_kappa_M_1h_nfw_mat
+            self.Cl_kappa_h_2h = get_power_BCMP_obj.Cl_kappa_M_2h_mat
+
+            if verbose_time:
+                ti = time.time()
+
+            self.gth_1h_out_mat_DM = vmap(self.get_Hankel_gth_1h_DM)(jnp.arange(len(self.angles_data_array)))
+            self.gth_out_mat_DM = self.gth_1h_out_mat_DM + self.gth_2h_out_mat
+            if verbose_time:
+                print('Time for gth dm Hankel transform: ', time.time() - ti)
+                ti = time.time()
 
 
-        if verbose_time:
-            print('Time for gty Hankel transform: ', time.time() - ti)
-            ti = time.time()
+
 
         if analysis_dict['do_shear2pt']:
             self.Cl_kappa_kappa_1h = get_power_BCMP_obj.Cl_kappa_kappa_1h_mat
             self.Cl_kappa_kappa_2h = get_power_BCMP_obj.Cl_kappa_kappa_2h_mat
+            self.Cl_kappa_kappa_halofit_mat = get_power_BCMP_obj.Cl_kappa_kappa_halofit_mat
 
             self.xip_1h_out_mat = vmap(self.get_Hankel_xip_1h)(jnp.arange(len(self.angles_data_array)))
             self.xip_2h_out_mat = vmap(self.get_Hankel_xip_2h)(jnp.arange(len(self.angles_data_array)))            
-            self.xip_out_mat = self.xip_1h_out_mat + self.xip_2h_out_mat
+            self.xip_halofitout_mat = vmap(self.get_Hankel_xip)(jnp.arange(len(self.angles_data_array)))            
+
 
 
             if verbose_time:
                 print('Time for xip Hankel transform: ', time.time() - ti)
                 ti = time.time()
-
-
             self.xim_1h_out_mat = vmap(self.get_Hankel_xim_1h)(jnp.arange(len(self.angles_data_array)))
             self.xim_2h_out_mat = vmap(self.get_Hankel_xim_2h)(jnp.arange(len(self.angles_data_array)))            
-            self.xim_out_mat = self.xim_1h_out_mat + self.xim_2h_out_mat
-
-
+            self.xim_halofitout_mat = vmap(self.get_Hankel_xim)(jnp.arange(len(self.angles_data_array)))            
             if verbose_time:
                 print('Time for xim Hankel transform: ', time.time() - ti)
 
-    @partial(jit, static_argnums=(0,))
+        if analysis_dict['do_shear2pt_DM']:
+            self.Cl_kappa_kappa_DM_1h = get_power_BCMP_obj.Cl_kappa_kappa_nfw_1h_mat
+            
+            self.xip_1h_out_DM_mat = vmap(self.get_Hankel_xip_DM_1h)(jnp.arange(len(self.angles_data_array)))
+            self.xip_out_DM_mat = self.xip_1h_out_DM_mat + self.xip_2h_out_mat
+
+
+            self.xim_1h_out_DM_mat = vmap(self.get_Hankel_xim_DM_1h)(jnp.arange(len(self.angles_data_array)))
+            self.xim_out_DM_mat = self.xim_1h_out_DM_mat + self.xim_2h_out_mat
+            if verbose_time:
+                print('Time for xim xip DM Hankel transform: ', time.time() - ti)
+
+        self.xip_out_mat = (self.xip_1h_out_mat + self.xip_2h_out_mat)/(self.xip_1h_out_DM_mat + self.xip_2h_out_mat)*self.xip_halofitout_mat
+        self.xim_out_mat = (self.xim_1h_out_mat + self.xim_2h_out_mat)/(self.xim_1h_out_DM_mat + self.xim_2h_out_mat)*self.xim_halofitout_mat
+
+
+
+#    @partial(jit, static_argnums=(0,))
     def get_Hankel_gty_1h(self, jt):
-        thetav = self.angles_data_array[jt] * (1/60.) * (jnp.pi/180.)
-        ell_theta = self.ell_array * thetav
-        J2ltheta = y = vmap(jv_jax, in_axes=(None, 0))(2, ell_theta)
-        prefac = (self.ell_array**2) * J2ltheta * (1/(2*jnp.pi))
-        prefac_tiled = jnp.tile(prefac, (self.nbins, 1))
-        integrand = prefac_tiled * self.Cl_kappa_y_1h
-        gty_1h = jnp.trapz(integrand, jnp.log(self.ell_array), axis=-1)
+#        thetav = self.angles_data_array[jt] * (1/60.) * (jnp.pi/180.)
+#        ell_theta = self.ell_array * thetav
+#        J2ltheta = y = vmap(jv_jax, in_axes=(None, 0))(2, ell_theta)
+#       prefac = (self.ell_array**2) * J2ltheta * (1/(2*jnp.pi))
+#       prefac_tiled = jnp.tile(prefac, (self.nbins, 1))
+#       integrand = prefac_tiled * self.Cl_kappa_y_1h
+#        gty_1h = jnp.trapz(integrand, jnp.log(self.ell_array), axis=-1)
+
+
+        H = Hankel(self.ell_array,nu=2, lowring=True, backend="jax")
+        y, G = H(self.Cl_kappa_y_1h, extrap=False)
+        yreturn = []
+        for i in range(len(G)):
+            yreturn.append(jnp.interp(self.angles_data_array[jt], y/((1/60.) * (jnp.pi/180.)), G[i]))
+        yreturn = jnp.array(yreturn).T/(2*jnp.pi)
+        return yreturn
+
+
         return gty_1h
 
     @partial(jit, static_argnums=(0,))
@@ -149,16 +207,69 @@ class get_corrfunc_BCMP:
         gty_1h = jnp.trapz(integrand, jnp.log(self.ell_array), axis=-1)
         return gty_1h    
 
-    @partial(jit, static_argnums=(0,))
+    #@partial(jit, static_argnums=(0,))
     def get_Hankel_xip_1h(self, jt):
-        thetav = self.angles_data_array[jt] * (1/60.) * (jnp.pi/180.)
-        ell_theta = self.ell_array * thetav
-        J2ltheta = y = vmap(jv_jax, in_axes=(None, 0))(0, ell_theta)
-        prefac = (self.ell_array**2) * J2ltheta * (1/(2*jnp.pi))
-        prefac_tiled = jnp.tile(prefac, (self.nbins, 1))
-        integrand = prefac_tiled * self.Cl_kappa_kappa_1h
-        gty_1h = jnp.trapz(integrand, jnp.log(self.ell_array), axis=-1)
-        return gty_1h
+        #thetav = self.angles_data_array[jt] * (1/60.) * (jnp.pi/180.)
+        #ell_theta = self.ell_array * thetav
+        #J2ltheta = y = vmap(jv_jax, in_axes=(None, 0))(0, ell_theta)
+        #prefac = (self.ell_array**2) * J2ltheta * (1/(2*jnp.pi))
+        #prefac_tiled = jnp.tile(prefac, (self.nbins, 1))
+        #integrand = prefac_tiled * self.Cl_kappa_kappa_1h
+        #gty_1h = jnp.trapz(integrand, jnp.log(self.ell_array), axis=-1)
+        #return gty_1h
+
+        H = Hankel(self.ell_array,nu=0, lowring=True, backend="jax")
+        y, G = H(self.Cl_kappa_kappa_1h, extrap=False)
+        yreturn = []
+        for i in range(len(G)):
+            for j in range(len(G)):
+                yreturn.append(jnp.interp(self.angles_data_array[jt], y/((1/60.) * (jnp.pi/180.)), G[i][j]))
+        yreturn = jnp.array(yreturn).reshape(len(G), len(G))/(2*jnp.pi)
+        return yreturn
+
+
+
+    #@partial(jit, static_argnums=(0,))
+    def get_Hankel_xip_DM_1h(self, jt):
+        #thetav = self.angles_data_array[jt] * (1/60.) * (jnp.pi/180.)
+        #ell_theta = self.ell_array * thetav
+        #J2ltheta = y = vmap(jv_jax, in_axes=(None, 0))(0, ell_theta)
+        #prefac = (self.ell_array**2) * J2ltheta * (1/(2*jnp.pi))
+        #prefac_tiled = jnp.tile(prefac, (self.nbins, 1))
+        #integrand = prefac_tiled * self.Cl_kappa_kappa_DM_1h
+        #gty_1h = jnp.trapz(integrand, jnp.log(self.ell_array), axis=-1)
+        #return gty_1h
+        H = Hankel(self.ell_array,nu=0, lowring=True, backend="jax")
+        y, G = H(self.Cl_kappa_kappa_DM_1h, extrap=False)
+        yreturn = []
+        for i in range(len(G)):
+            for j in range(len(G)):
+                yreturn.append(jnp.interp(self.angles_data_array[jt], y/((1/60.) * (jnp.pi/180.)), G[i][j]))
+        yreturn = jnp.array(yreturn).reshape(len(G), len(G))/(2*jnp.pi)
+        return yreturn
+
+
+
+    #@partial(jit, static_argnums=(0,))
+    def get_Hankel_xip(self, jt):
+        #thetav = self.angles_data_array[jt] * (1/60.) * (jnp.pi/180.)
+        #ell_theta = self.ell_array * thetav
+        #J2ltheta = y = vmap(jv_jax, in_axes=(None, 0))(0, ell_theta)
+        #prefac = (self.ell_array**2) * J2ltheta * (1/(2*jnp.pi))
+        #prefac_tiled = jnp.tile(prefac, (self.nbins, 1))
+        #integrand = prefac_tiled * self.Cl_kappa_kappa_halofit_mat
+        #gty_1h = jnp.trapz(integrand, jnp.log(self.ell_array), axis=-1)
+        #return gty_1h
+        H = Hankel(self.ell_array,nu=0, lowring=True, backend="jax")
+        y, G = H(self.Cl_kappa_kappa_halofit_mat, extrap=False)
+        yreturn = []
+        for i in range(len(G)):
+            for j in range(len(G)):
+                yreturn.append(jnp.interp(self.angles_data_array[jt], y/((1/60.) * (jnp.pi/180.)), G[i][j]))
+        yreturn = jnp.array(yreturn).T.reshape(len(G), len(G))/(2*jnp.pi)
+        return yreturn
+
+
 
     @partial(jit, static_argnums=(0,))
     def get_Hankel_xip_2h(self, jt):
@@ -171,16 +282,57 @@ class get_corrfunc_BCMP:
         gty_1h = jnp.trapz(integrand, jnp.log(self.ell_array), axis=-1)
         return gty_1h    
 
-    @partial(jit, static_argnums=(0,))
+    #@partial(jit, static_argnums=(0,))
     def get_Hankel_xim_1h(self, jt):
-        thetav = self.angles_data_array[jt] * (1/60.) * (jnp.pi/180.)
-        ell_theta = self.ell_array * thetav
-        J2ltheta = y = vmap(jv_jax, in_axes=(None, 0))(4, ell_theta)
-        prefac = (self.ell_array**2) * J2ltheta * (1/(2*jnp.pi))
-        prefac_tiled = jnp.tile(prefac, (self.nbins, 1))
-        integrand = prefac_tiled * self.Cl_kappa_kappa_1h
-        gty_1h = jnp.trapz(integrand, jnp.log(self.ell_array), axis=-1)
-        return gty_1h
+#        thetav = self.angles_data_array[jt] * (1/60.) * (jnp.pi/180.)
+#        ell_theta = self.ell_array * thetav
+#        J2ltheta = y = vmap(jv_jax, in_axes=(None, 0))(4, ell_theta)
+#        prefac = (self.ell_array**2) * J2ltheta * (1/(2*jnp.pi))
+#       prefac_tiled = jnp.tile(prefac, (self.nbins, 1))
+#        integrand = prefac_tiled * self.Cl_kappa_kappa_1h
+#        gty_1h = jnp.trapz(integrand, jnp.log(self.ell_array), axis=-1)
+        #return gty_1h
+
+        H = Hankel(self.ell_array,nu=4, lowring=True, backend="jax")
+        y, G = H(self.Cl_kappa_kappa_1h, extrap=False)
+        yreturn = []
+        for i in range(len(G)):
+            for j in range(len(G)):
+                yreturn.append(jnp.interp(self.angles_data_array[jt], y/((1/60.) * (jnp.pi/180.)), G[i][j]))
+        yreturn = jnp.array(yreturn).reshape(len(G), len(G))/(2*jnp.pi)
+        return yreturn
+
+
+
+
+
+
+
+    #@partial(jit, static_argnums=(0,))
+    def get_Hankel_xim_DM_1h(self, jt):
+        #thetav = self.angles_data_array[jt] * (1/60.) * (jnp.pi/180.)
+        #ell_theta = self.ell_array * thetav
+        #J2ltheta = y = vmap(jv_jax, in_axes=(None, 0))(4, ell_theta)
+        #prefac = (self.ell_array**2) * J2ltheta * (1/(2*jnp.pi))
+        #prefac_tiled = jnp.tile(prefac, (self.nbins, 1))
+        #integrand = prefac_tiled * self.Cl_kappa_kappa_DM_1h
+        #gty_1h = jnp.trapz(integrand, jnp.log(self.ell_array), axis=-1)
+        #return gty_1h
+        H = Hankel(self.ell_array,nu=4, lowring=True, backend="jax")
+        y, G = H(self.Cl_kappa_kappa_DM_1h, extrap=False)
+        yreturn = []
+        for i in range(len(G)):
+            for j in range(len(G)):
+                yreturn.append(jnp.interp(self.angles_data_array[jt], y/((1/60.) * (jnp.pi/180.)), G[i][j]))
+        yreturn = jnp.array(yreturn).reshape(len(G), len(G))/(2*jnp.pi)
+        return yreturn
+
+
+
+
+
+
+
 
     @partial(jit, static_argnums=(0,))
     def get_Hankel_xim_2h(self, jt):
@@ -192,6 +344,82 @@ class get_corrfunc_BCMP:
         integrand = prefac_tiled * self.Cl_kappa_kappa_2h
         gty_1h = jnp.trapz(integrand, jnp.log(self.ell_array), axis=-1)
         return gty_1h    
+
+    #@partial(jit, static_argnums=(0,))
+    def get_Hankel_xim(self, jt):
+#        thetav = self.angles_data_array[jt] * (1/60.) * (jnp.pi/180.)
+#        ell_theta = self.ell_array * thetav
+#        J2ltheta = y = vmap(jv_jax, in_axes=(None, 0))(4, ell_theta)
+#        prefac = (self.ell_array**2) * J2ltheta * (1/(2*jnp.pi))
+#        prefac_tiled = jnp.tile(prefac, (self.nbins, 1))
+#        integrand = prefac_tiled * self.Cl_kappa_kappa_halofit_mat
+#        gty_1h = jnp.trapz(integrand, jnp.log(self.ell_array), axis=-1)
+        #return gty_1h    
+        H = Hankel(self.ell_array,nu=4, lowring=True, backend="jax")
+        y, G = H(self.Cl_kappa_kappa_halofit_mat, extrap=False)
+        yreturn = []
+        for i in range(len(G)):
+            for j in range(len(G)):
+                yreturn.append(jnp.interp(self.angles_data_array[jt], y/((1/60.) * (jnp.pi/180.)), G[i][j]))
+        yreturn = jnp.array(yreturn).T.reshape(len(G), len(G))/(2*jnp.pi)
+        return yreturn
+
+
+
+
+
+
+
+
+
+    #@partial(jit, static_argnums=(0,))
+    def get_Hankel_gth_1h(self, jt):
+        #thetav = self.angles_data_array[jt] * (1/60.) * (jnp.pi/180.)
+        #ell_theta = self.ell_array * thetav
+        #J2ltheta = y = vmap(jv_jax, in_axes=(None, 0))(2, ell_theta)
+        #prefac = (self.ell_array**2) * J2ltheta * (1/(2*jnp.pi))
+        #prefac_tiled = jnp.tile(prefac, (self.nbins, 1))
+        #integrand = prefac_tiled * self.Cl_kappa_h_1h
+        #gty_1h = jnp.trapz(integrand, jnp.log(self.ell_array), axis=-1)
+        H = Hankel(self.ell_array,nu=2, lowring=True, backend="jax")
+        y, G = H(self.Cl_kappa_h_1h, extrap=False)
+        yreturn = []
+        for i in range(len(G)):
+            yreturn.append(jnp.interp(self.angles_data_array[jt], y/((1/60.) * (jnp.pi/180.)), G[i]))
+        yreturn = jnp.array(yreturn).T/(2*jnp.pi)
+        return yreturn
+
+    #@partial(jit, static_argnums=(0,))
+    def get_Hankel_gth_1h_DM(self, jt):
+        #thetav = self.angles_data_array[jt] * (1/60.) * (jnp.pi/180.)
+        #ell_theta = self.ell_array * thetav
+        #J2ltheta = y = vmap(jv_jax, in_axes=(None, 0))(2, ell_theta)
+        #prefac = (self.ell_array**2) * J2ltheta * (1/(2*jnp.pi))
+        #prefac_tiled = jnp.tile(prefac, (self.nbins, 1))
+        #integrand = prefac_tiled * self.Cl_kappa_h_1h_DM
+        #gty_1h = jnp.trapz(integrand, jnp.log(self.ell_array), axis=-1)
+        
+        H = Hankel(self.ell_array,nu=2, lowring=True, backend="jax")
+        y, G = H(self.Cl_kappa_h_1h_DM, extrap=False)
+        yreturn = []
+        for i in range(len(G)):
+            yreturn.append(jnp.interp(self.angles_data_array[jt], y/((1/60.) * (jnp.pi/180.)), G[i]))
+        yreturn = jnp.array(yreturn).T/(2*jnp.pi)
+        return yreturn#gty_1h
+
+
+    @partial(jit, static_argnums=(0,))
+    def get_Hankel_gth_2h(self, jt):
+        thetav = self.angles_data_array[jt] * (1/60.) * (jnp.pi/180.)
+        ell_theta = self.ell_array * thetav
+        J2ltheta = y = vmap(jv_jax, in_axes=(None, 0))(2, ell_theta)
+        prefac = (self.ell_array**2) * J2ltheta * (1/(2*jnp.pi))
+        prefac_tiled = jnp.tile(prefac, (self.nbins, 1))
+        integrand = prefac_tiled * self.Cl_kappa_h_2h
+        gty_1h = jnp.trapz(integrand, jnp.log(self.ell_array), axis=-1)
+        return gty_1h    
+
+
 
     # @partial(jit, static_argnums=(0,))
     # def interp_gty_theta(self, jb, jt):

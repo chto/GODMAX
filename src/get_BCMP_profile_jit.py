@@ -16,7 +16,6 @@ RHO_CRIT_0_MPC3 = 2.77536627245708E11
 G_new = ((const.G * (u.M_sun / u.Mpc**3) * (u.M_sun) / (u.Mpc)).to(u.eV / u.cm**3)).value
 # from colossus.halo import mass_so
 import jax_cosmo.background as bkgrd
-
 from jax_cosmo import Cosmology
 # from colossus.cosmology import cosmology
 
@@ -63,6 +62,8 @@ class BCM_18_wP:
         self.alpha_nt = sim_params_dict['alpha_nt']
         self.beta_nt = sim_params_dict['beta_nt']
         self.n_nt = sim_params_dict['n_nt']
+        self.delta = sim_params_dict['delta']
+        self.gamma = sim_params_dict['gamma']
 
         self.num_points_trapz_int = num_points_trapz_int
 
@@ -86,6 +87,12 @@ class BCM_18_wP:
         vmap_func1 = vmap(self.get_M_to_R, (0, None))
         vmap_func2 = vmap(vmap_func1, (None, 0))
         self.r200c_mat = vmap_func2(jnp.arange(nM), jnp.arange(nz)).T
+
+        vmap_func1 = vmap(lambda x, y : self.get_M_to_R(x,y, mdef_delta=500), (0, None))
+        vmap_func2 = vmap(vmap_func1, (None, 0))
+        self.r500c_mat = vmap_func2(jnp.arange(nM), jnp.arange(nz)).T
+
+
 
 
         self.rt_mat = self.r200c_mat * self.epsilon_rt
@@ -170,6 +177,7 @@ class BCM_18_wP:
         vmap_func3 = vmap(vmap_func2, (None, None, 0, None))
         vmap_func4 = vmap(vmap_func3, (None, None, None, 0))
         Pnt_fac = vmap_func4(jnp.arange(nr), jnp.arange(nc), jnp.arange(nz), jnp.arange(nM)).T
+        self.Pnt_fac = Pnt_fac
 
         self.Pnt_mat = Pnt_fac * self.Ptot_mat
         self.Pth_mat = self.Ptot_mat * jnp.maximum(0, 1 - (self.Pnt_mat / self.Ptot_mat))
@@ -197,7 +205,9 @@ class BCM_18_wP:
 
     @partial(jit, static_argnums=(0,))
     def get_beta(self, jM, jz):
-        value = 3 - jnp.power((self.Mc_mat[jM, jz] / (self.M200c_array[jM])), self.mu_beta)
+        #value = 3 - jnp.power((self.Mc_mat[jM, jz] / (self.M200c_array[jM])), self.mu_beta)
+        #Giri+ 2021
+        value = 3/(1+jnp.power((self.M200c_array[jM]/self.Mc_mat[jM, jz]), -1*self.mu_beta))
         return value
 
 
@@ -325,7 +335,7 @@ class BCM_18_wP:
             r = r_array_here[jr]
         u = r / self.r_co_mat[jM, jz]
         v = r / self.r_ej_mat[jM, jz]
-        rho_gas_unnorm = 1 / (jnp.power(1 + u, self.beta_mat[jM, jz]) * jnp.power(1 + v**2, (7 - self.beta_mat[jM, jz]) / 2.))
+        rho_gas_unnorm = 1 / (jnp.power(1 + u, self.beta_mat[jM, jz]) * jnp.power(1 + v**self.gamma, (self.delta - self.beta_mat[jM, jz]) / self.gamma))
         return rho_gas_unnorm
 
     @partial(jit, static_argnums=(0,))
@@ -448,7 +458,7 @@ class BCM_18_wP:
             r = self.r_array[jr]
         else:
             r = r_array_here[jr]
-        logx = jnp.linspace(jnp.log(r), jnp.log(6*self.r200c_mat[jM, jz]), self.num_points_trapz_int)
+        logx = jnp.linspace(jnp.log(r), jnp.log(10*self.r200c_mat[jM, jz]), self.num_points_trapz_int)
         x = jnp.exp(logx)
         fx1 = (vmap(self.get_rho_gas_normed, (0, None, None, None,None))(jnp.arange(len(logx)), jc, jz, jM, x))
         # fx2 = (vmap(self.get_Mdmb, (0, None, None, None,None))(jnp.arange(len(logx)), jc, jz, jM, x))
@@ -465,7 +475,7 @@ class BCM_18_wP:
         return fz
 
     @partial(jit, static_argnums=(0,))
-    def get_Pnt_fac(self, jr, jc, jM, jz, r_array_here=None):
+    def get_Pnt_fac(self, jr, jc, jz, jM, r_array_here=None):
         '''This is the non-thermal pressure profile'''
         if r_array_here is None:
             r = self.r_array[jr]
