@@ -26,7 +26,7 @@ class get_power_BCMP:
                 analysis_dict,
                 num_points_trapz_int=64,
                 setup_power_BCMP_obj=None,
-                verbose_time=False
+                verbose_time=False,doyclonly=False, kcut=None
             ):    
 
         if verbose_time:
@@ -56,14 +56,36 @@ class get_power_BCMP:
         self.r_array = setup_power_BCMP_obj.r_array
         self.M_array = setup_power_BCMP_obj.M_array
         self.z_array = setup_power_BCMP_obj.z_array
+        self.kPk_array = setup_power_BCMP_obj.kPk_array
         self.scale_fac_a_array = 1./(1. + self.z_array)
         self.conc_array = setup_power_BCMP_obj.conc_array
         self.nM, self.nz, self.nc = len(self.M_array), len(self.z_array), len(self.conc_array)
+
+        zmin, zmax, nz = halo_params_dict['zmin'], halo_params_dict['zmax'], halo_params_dict['nz']
+        Mmin, Mmax, nM = halo_params_dict['Mmin'], halo_params_dict['Mmax'], halo_params_dict['nM']
         self.chi_array = setup_power_BCMP_obj.chi_array
         self.dchi_dz_array = bkgrd.dchioverda(self.cosmo_jax, self.scale_fac_a_array)*(self.scale_fac_a_array**2)
 
-#(const.c.value * 1e-3) / bkgrd.H(self.cosmo_jax, self.scale_fac_a_array)
+        self.logc_array = jnp.log(self.conc_array)
+        sig_logc = setup_power_BCMP_obj.sig_logc_z_array
+        sig_logc_mat = jnp.tile(sig_logc[:, None, None], (1, self.nM, self.nc))
+        conc_mat = jnp.tile(self.conc_array[None, None, :], (self.nz, self.nM, 1))
+        cmean_mat = jnp.tile(setup_power_BCMP_obj.conc_Mz_mat[:,:,None], (1, 1, self.nc))
+        self.p_logc_Mz = jnp.exp(-0.5 * (jnp.log(conc_mat/cmean_mat)/ sig_logc_mat)**2) * (1.0/(sig_logc_mat * jnp.sqrt(2*jnp.pi)))
+        if verbose_time:
+            print('Time for computing p_logc_Mz: ', time.time() - ti)
+            ti = time.time()
+
         self.hmf_Mz_mat = setup_power_BCMP_obj.hmf_Mz_mat
+        self.ycl= setup_power_BCMP_obj.ycl
+        self.ycl_integrated = vmap(self.get_ycl_int, (0))(jnp.arange(1))[0]
+        if doyclonly:
+            return
+
+
+
+
+#(const.c.value * 1e-3) / bkgrd.H(self.cosmo_jax, self.scale_fac_a_array)
         self.uyl_mat = jnp.moveaxis(setup_power_BCMP_obj.uyl_mat, 1, 3)
         self.byl_mat = setup_power_BCMP_obj.byl_mat
         self.ukappal_dmb_prefac_mat = jnp.moveaxis(setup_power_BCMP_obj.ukappal_dmb_prefac_mat, 1, 3)
@@ -72,7 +94,6 @@ class get_power_BCMP:
         self.Pknonlin_lz_mat = setup_power_BCMP_obj.Pknonlin_lz_mat
         self.ell_array = setup_power_BCMP_obj.ell_array
         self.bias_Mz_mat = setup_power_BCMP_obj.bias_Mz_mat
-        self.ycl= setup_power_BCMP_obj.ycl
         self.bh = setup_power_BCMP_obj.bh
         self.nell = len(self.ell_array)
 
@@ -96,16 +117,6 @@ class get_power_BCMP:
         # self.Wk_mat = self.Wk_mat
         if verbose_time:
             print('Time for computing Wk_mat: ', time.time() - ti)
-            ti = time.time()
-
-        self.logc_array = jnp.log(self.conc_array)
-        sig_logc = setup_power_BCMP_obj.sig_logc_z_array
-        sig_logc_mat = jnp.tile(sig_logc[:, None, None], (1, self.nM, self.nc))
-        conc_mat = jnp.tile(self.conc_array[None, None, :], (self.nz, self.nM, 1))
-        cmean_mat = jnp.tile(setup_power_BCMP_obj.conc_Mz_mat[:,:,None], (1, 1, self.nc))
-        self.p_logc_Mz = jnp.exp(-0.5 * (jnp.log(conc_mat/cmean_mat)/ sig_logc_mat)**2) * (1.0/(sig_logc_mat * jnp.sqrt(2*jnp.pi)))
-        if verbose_time:
-            print('Time for computing p_logc_Mz: ', time.time() - ti)
             ti = time.time()
 
         if analysis_dict['do_sheary']:
@@ -146,7 +157,6 @@ class get_power_BCMP:
                 print('Time for computing Cl_kappa_m_1h_nfw_mat: ', time.time() - ti)
                 ti = time.time()
 
-        self.ycl_integrated = self.get_ycl_int()
 
         if analysis_dict['do_shear2pt']:
             vmap_func1 = vmap(self.get_Cl_kappa_kappa_1h, (0, None, None))
@@ -174,36 +184,39 @@ class get_power_BCMP:
                 print('Time for computing Cl_kappa_kappa_nfw_1h_mat: ', time.time() - ti)
                 print('Total time for computing all Cls: ', time.time() - t0)                
                 # ti = time.time()
+            self.kcut = kcut
             vmap_func1 = vmap(self.get_Cl_kappa_kappa_halofit, (0, None, None))
-            vmap_func2 = vmap(vmap_func1, (None, 0, None))
-            vmap_func3 = vmap(vmap_func2, (None, None, 0))
+            vmap_func2 = vmap(vmap_func1, (None, 0, None, ))
+            vmap_func3 = vmap(vmap_func2, (None, None, 0, ))
             self.Cl_kappa_kappa_halofit_mat = vmap_func3(jnp.arange(self.nbins), jnp.arange(self.nbins), jnp.arange(self.nell)).T
+            self.Cl_kappa_kappa_halofit_mat = self.Cl_kappa_kappa_halofit_mat.at[jnp.where(jnp.isnan(self.Cl_kappa_kappa_halofit_mat))].set(0)
             if verbose_time:
                 print('Time for computing Cl_kappa_kappa_halofit_mat: ', time.time() - ti)
                 # print('Total time for computing all Cls: ', time.time() - t0)
                 ti = time.time()                
 
 
-
-    def get_ycl_int(self):
+    @partial(jit, static_argnums=(0))
+    def get_ycl_int(self, dummy):
         fx_intc = jnp.trapz(self.ycl*self.p_logc_Mz, x=self.logc_array)/jnp.trapz(self.p_logc_Mz, x=self.logc_array)
         yall=[]
-        for i in range(self.hmf_Mz_mat.shape[1]):
+        for i in range(self.nM):
             nc = self.hmf_Mz_mat[:,i]
-            nc = nc.at[jnp.where(self.z_array<self.zbin[0])].set(0)
-            nc  = nc.at[jnp.where(self.z_array>self.zbin[1])].set(0)
+            #nc = nc.at[jnp.where(self.z_array<self.zbin[0])].set(0)
+            #nc  = nc.at[jnp.where(self.z_array>self.zbin[1])].set(0)
             fx = fx_intc[:,i]* (self.chi_array ** 2) * self.dchi_dz_array*nc
             
             @vmap
             def integrand_norm(z_prime):
                 return jnp.interp(z_prime, self.z_array, (self.chi_array ** 2) * self.dchi_dz_array*nc)
-            norm = simps(integrand_norm, self.zbin[0], self.zbin[1], 128)
+            norm = simps(integrand_norm, self.z_array[0], self.z_array[-1], 128)
             
             def integrand(z_prime):
                 return jnp.interp(z_prime, self.z_array, fx)
             fx_intz = simps(integrand, self.z_array[0], self.z_array[-1], 128)/norm
             yall.append(fx_intz)
         return jnp.array(yall)
+
     @partial(jit, static_argnums=(0,1))
     def get_weak_lensing_kernel_z(self, jb, z):
         chi = jnp.interp(z, self.z_array, self.chi_array)
@@ -329,7 +342,20 @@ class get_power_BCMP:
         fx_intz = jnp.trapz(fx, x=self.z_array)
         return fx_intz
 
-    @partial(jit, static_argnums=(0,))
+    def nonlinearpowercut(self, rcut=None):
+        powerspectra = np.zeros((len(self.z_array), len(self.kPk_array)))
+        for i in range(len(self.z_array)):
+            pin = power.nonlinear_matter_power(self.cosmo_jax, self.kPk_array, 1/(1+self.z_array[i]))
+            from mcfit import P2xi, xi2P
+            r, xi = P2xi(self.kPk_array)(pin)
+            xicut = xi
+            xicut[r>rcut[1]]=0
+            xicut[r<rcut[0]]=0
+            kcut,pcut = xi2P(r)(xicut)
+            powerspectra[i] = pcut
+        powerspectra[~np.isfinite(powerspectra)] =0
+        return powerspectra
+    #@partial(jit, static_argnums=(0,))
     def get_Cl_kappa_kappa_halofit(self, jb1, jb2, jl):
         """
         Computes the 1-halo term of the cross-spectrum between the convergence and the
@@ -338,6 +364,12 @@ class get_power_BCMP:
         
 
         #fx = ((self.ell_array[jl]+2)*(self.ell_array[jl]+1)*(self.ell_array[jl])*(self.ell_array[jl]-1)/((self.ell_array[jl] + 0.5) ** 4))*prefac_for_uk1 * prefac_for_uk2  * (self.chi_array ** 2) * self.dchi_dz_array * self.Pknonlin_lz_mat[jl]
+        rcut = self.kcut
+        if rcut is not None:
+            from jax.scipy.interpolate import RegularGridInterpolator
+            powerin = self.nonlinearpowercut(rcut)
+            self.powerin = powerin
+            interp = RegularGridInterpolator((self.z_array, self.kPk_array), powerin, method='linear')
         @vmap 
         def integrand(z_prime):
             chi = jnp.interp(z_prime, self.z_array, self.chi_array)
@@ -347,7 +379,11 @@ class get_power_BCMP:
             prefac_for_uk1 = Wk_jb1/jnp.clip(chi**2, 1.0)
             Wk_jb2 = self.get_weak_lensing_kernel_z(jb2, z_prime)
             prefac_for_uk2 = Wk_jb2/jnp.clip(chi**2, 1.0)
-            fx = ((self.ell_array[jl]+2)*(self.ell_array[jl]+1)*(self.ell_array[jl])*(self.ell_array[jl]-1)/((self.ell_array[jl] + 0.5) ** 4))*prefac_for_uk1 * prefac_for_uk2  * (chi** 2) * dchi_dz * power.nonlinear_matter_power(self.cosmo_jax, k, 1/(1+z_prime)) 
+            if rcut is not None:
+                p = interp((z_prime, k))
+            else:
+                p = power.nonlinear_matter_power(self.cosmo_jax, k, 1/(1+z_prime))
+            fx = ((self.ell_array[jl]+2)*(self.ell_array[jl]+1)*(self.ell_array[jl])*(self.ell_array[jl]-1)/((self.ell_array[jl] + 0.5) ** 4))*prefac_for_uk1 * prefac_for_uk2  * (chi** 2) * dchi_dz * p 
             return fx
         fx_intz = simps(integrand, self.z_array[0], self.z_array[-1], 128)
 

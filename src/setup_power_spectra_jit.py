@@ -33,7 +33,8 @@ class setup_power_BCMP:
                 halo_params_dict,
                 num_points_trapz_int=64,
                 BCMP_obj=None,
-                verbose_time=False
+                verbose_time=False, 
+                doyclonly=False, dopeak=True
             ):    
         
         self.cosmo_params = sim_params_dict['cosmo']
@@ -63,13 +64,14 @@ class setup_power_BCMP:
         self.scale_fac_a_array = 1./(1. + self.z_array)
         self.conc_array = BCMP_obj.conc_array
         self.nr, self.nM, self.nz, self.nc = len(self.r_array), len(self.M_array), len(self.z_array), len(self.conc_array)
+
         self.r200c_mat = BCMP_obj.r200c_mat
         self.rho_dmb_mat = BCMP_obj.rho_dmb_mat
         self.rho_nfw_mat = BCMP_obj.rho_nfw_mat
         self.sig_logc_z_array = jnp.array(halo_params_dict['sig_logc_z_array'])
         self.beam_fwhm_arcmin = sim_params_dict['beam_fwhm_arcmin']        
 
-        self.kPk_array = jnp.logspace(jnp.log10(1E-3), jnp.log10(100), 128)
+        self.kPk_array = jnp.logspace(jnp.log10(1E-3), jnp.log10(1000), 400)
         self.plin_kz_mat = vmap(linear_matter_power,(None, None, 0))(self.cosmo_jax, self.kPk_array, self.scale_fac_a_array).T
         self.pnonlin_kz_mat = vmap(nonlinear_matter_power,(None, None, 0))(self.cosmo_jax, self.kPk_array, self.scale_fac_a_array).T
 
@@ -104,6 +106,37 @@ class setup_power_BCMP:
         vmap_func1 = vmap(self.get_conc_Mz, (0, None))
         vmap_func2 = vmap(vmap_func1, (None, 0))
         self.conc_Mz_mat = vmap_func2(jnp.arange(self.nz), jnp.arange(self.nM)).T
+        sigmat = const.sigma_T
+        m_e = const.m_e
+        c = const.c
+        coeff = sigmat / (m_e * (c ** 2))
+        oneMpc_h = (((10 ** 6) / self.cosmo_jax.h) * (u.pc).to(u.m)) * (u.m)
+        self.const_coeff = ((coeff * oneMpc_h).to(((u.cm ** 3) / u.eV))).value
+        Y=0.24
+        self.Pe_conv_fac =  (4-2*Y)/(8-5*Y)
+        self.y3d_mat = self.Pe_conv_fac * self.const_coeff * BCMP_obj.Pth_mat
+
+
+        zmin, zmax, nz = halo_params_dict['zmin'], halo_params_dict['zmax'], halo_params_dict['nz']
+        Mmin, Mmax, nM = halo_params_dict['Mmin'], halo_params_dict['Mmax'], halo_params_dict['nM']
+        self.ysz_int_size = 20
+        vmap_func1 = vmap(lambda x, y: self.BCMP_obj.r500c_mat[x,y], (0, None))
+        vmap_func2 = vmap(vmap_func1, (None, 0))
+        self.r500c_mat = vmap_func2(jnp.arange(nM), jnp.arange(nz))
+
+
+        vmap_func1 = vmap(self.get_yintexlist, (0, None))
+        vmap_func2 = vmap(vmap_func1, (None, 0))
+        self.r_prime_array= vmap_func2(jnp.arange(nM), jnp.arange(nz))
+
+        vmap_func1 = vmap(self.get_yintexlist1, (0, None))
+        vmap_func2 = vmap(vmap_func1, (None, 0))
+        self.r_prime_array1= vmap_func2(jnp.arange(nM), jnp.arange(nz))
+
+        self.ycl = self.get_ycl(dopeak=dopeak)
+        if doyclonly:
+            return
+
 
         
         
@@ -136,17 +169,7 @@ class setup_power_BCMP:
         self.Pmm_nfw_1h_mat = vmap_func2(jnp.arange(len(self.kPk_array)), jnp.arange(self.nz)).T
 
 
-        sigmat = const.sigma_T
-        m_e = const.m_e
-        c = const.c
-        coeff = sigmat / (m_e * (c ** 2))
-        oneMpc_h = (((10 ** 6) / self.cosmo_jax.h) * (u.pc).to(u.m)) * (u.m)
-        self.const_coeff = ((coeff * oneMpc_h).to(((u.cm ** 3) / u.eV))).value
-        Y=0.24
-        self.Pe_conv_fac =  (4-2*Y)/(8-5*Y)
-        self.y3d_mat = self.Pe_conv_fac * self.const_coeff * BCMP_obj.Pth_mat
-        self.ycl = self.get_ycl()
-
+        
         ellmin, ellmax, nell = halo_params_dict['ellmin'], halo_params_dict['ellmax'], halo_params_dict['nell']
         self.ell_array = jnp.logspace(jnp.log10(ellmin), jnp.log10(ellmax), nell)
         self.sig_beam = self.beam_fwhm_arcmin * (1. / 60.) * (jnp.pi / 180.) * (1. / jnp.sqrt(8. * jnp.log(2)))
@@ -188,6 +211,12 @@ class setup_power_BCMP:
         self.Pknonlin_lz_mat = vmap_func2(jnp.arange(nell), jnp.arange(self.nz)).T
 
 
+
+    def get_yintexlist(self, x, y):
+        return jnp.linspace(0, 5*self.r500c_mat[x,y], self.ysz_int_size)
+
+    def get_yintexlist1(self, x ,y):
+        return jnp.linspace(1.0001*self.r500c_mat[x,y], 5.0*self.BCMP_obj.r500c_mat[x,y], self.ysz_int_size)
 
     def get_rho_m(self, z):
         return (constants.RHO_CRIT_0_KPC3 * self.cosmo_params['Om0'] * (1.0 + z)**3) * 1E9
@@ -508,8 +537,8 @@ class setup_power_BCMP:
         return Pmm_1h
 
 
-
-    def get_ycl(self, do3D=False):
+    @partial(jit, static_argnums=(0,1,2))
+    def get_ycl(self, do3D=False, dopeak=True):
         """
         Get y500 for cluster
         Out [nz, nM, nc] 
@@ -525,24 +554,46 @@ class setup_power_BCMP:
                     c = self.conc_array[i]
                     z = self.z_array[j]
                     m = self.M_array[k]
-                    def integrand_3d(r_prime):
-                        dndz = (jnp.interp(r_prime,  self.r_array, (Pe_conv_fac*self.BCMP_obj.Pth_mat)[:, i, j, k]*(self.r_array**2)))
-                        return dndz
-                
-                    def integrand(r_prime):
-                        invalue = (Pe_conv_fac*self.BCMP_obj.Pth_mat)[:, i, j, k]*jnp.sqrt(self.r_array**2-R500c**2)*self.r_array
-                        invalue = invalue.at[indx].set(0)
-                        dndz = jnp.interp(r_prime,  self.r_array, invalue)
-                        return dndz
                     R500c = self.BCMP_obj.r500c_mat[k,j]
-                    indx = jnp.where(self.r_array<=1.0001*R500c)
-                    if do3D:
-                        radial_kernel = simps(integrand_3d, 0, R500c, 128)*coeff*4*jnp.pi/self.DA_array[j]**2
-                    else: 
-                        radial_kernel = simps(integrand_3d, 0, 5*R500c, 128)*coeff*4*jnp.pi/self.DA_array[j]**2-simps(integrand, 1.0001*R500c, 5*R500c, 128)*coeff*4*jnp.pi/self.DA_array[j]**2
-                    result.append(radial_kernel)
-                    if jnp.isnan(result[-1]):
-                        assert(0)
+                    if dopeak:
+                        def integrand(r_prime):
+                             dndz = (jnp.interp(r_prime,  self.r_array, (Pe_conv_fac*self.BCMP_obj.Pth_mat)[:, i, j, k]))
+                             return dndz
+                        radial_kernel = 2*simps(integrand, 0, 20*R500c, self.ysz_int_size)*coeff
+                        result.append(radial_kernel)
+                    else:
+                        invalue = jnp.zeros(len(self.r_array))
+                        def integrand_3d(r_prime):
+                            dndz = (jnp.interp(r_prime,  self.r_array, (Pe_conv_fac*self.BCMP_obj.Pth_mat)[:, i, j, k]*(self.r_array**2)))
+                            return dndz
+
+                        def integrand(r_prime):
+                            invalue.at[np.arange(len(invalue))].set(jnp.where(self.r_array>1.0001*R500c, (Pe_conv_fac*self.BCMP_obj.Pth_mat)[:, i, j, k]*jnp.sqrt(self.r_array**2-R500c**2)*self.r_array, 0))
+                            dndz = jnp.interp(r_prime,  self.r_array, invalue)
+                            return dndz
+                        #indx = jnp.where(self.r_array<=1.0001*R500c)
+                        #radial_kernel = simps(integrand_3d, 0, R500c, self.ysz_int_size)*coeff*4*jnp.pi/self.DA_array[j]**2
+                        if do3D:
+                            #radial_kernel = simps(integrand_3d, 0, R500c, self.ysz_int_size)*coeff*4*jnp.pi/self.DA_array[j]**2
+
+                            #r_prime_array = jnp.arange(0, R500c, self.ysz_int_size)
+                            integrand_3d_array = integrand_3d(self.r_prime_array[j,k])
+                            radial_kernel = jnp.trapz(integrand_3d_array, self.r_prime_array)*coeff*4*jnp.pi/self.DA_array[j]**2
+                        else: 
+
+                            integrand_3d_array = integrand_3d(self.r_prime_array[j,k])
+                            radial_kernel = jnp.trapz(integrand_3d_array, self.r_prime_array[j,k])*coeff*4*jnp.pi/self.DA_array[j]**2
+                          
+
+                            integrand_array = integrand(self.r_prime_array1[j,k])
+                            radial_kernel -= jnp.trapz(integrand_array, self.r_prime_array1[j,k])*coeff*4*jnp.pi/self.DA_array[j]**2
+
+
+
+                            #radial_kernel = simps(integrand_3d, 0, 5*R500c, self.ysz_int_size)*coeff*4*jnp.pi/self.DA_array[j]**2-simps(integrand, 1.0001*R500c, 5*R500c, self.ysz_int_size)*coeff*4*jnp.pi/self.DA_array[j]**2
+                        result.append(radial_kernel)
+                        #if jnp.isnan(result[-1]):
+                        #    assert(0)
 
                                 
         result=jnp.array(result)
