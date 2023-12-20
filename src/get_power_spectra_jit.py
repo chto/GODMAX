@@ -49,10 +49,12 @@ class get_power_BCMP:
         if verbose_time:
             ti = time.time()
         if setup_power_BCMP_obj is None:
-            setup_power_BCMP_obj = setup_power_BCMP(sim_params_dict, halo_params_dict, num_points_trapz_int=num_points_trapz_int, verbose_time=verbose_time)
+            setup_power_BCMP_obj = setup_power_BCMP(sim_params_dict, halo_params_dict, analysis_dict, num_points_trapz_int=num_points_trapz_int, verbose_time=verbose_time)
         if verbose_time:
             print('Time for setup_power_BCMP: ', time.time() - ti)
             ti = time.time()
+
+        self.calc_nfw_only = analysis_dict['calc_nfw_only']
         self.r_array = setup_power_BCMP_obj.r_array
         self.M_array = setup_power_BCMP_obj.M_array
         self.z_array = setup_power_BCMP_obj.z_array
@@ -79,6 +81,8 @@ class get_power_BCMP:
         self.hmf_Mz_mat = setup_power_BCMP_obj.hmf_Mz_mat
         self.ycl= setup_power_BCMP_obj.ycl
         self.ycl_integrated = vmap(self.get_ycl_int, (0))(jnp.arange(1))[0]
+        self.Mcl = setup_power_BCMP_obj.Mcl
+        self.Mcl500_integrated = vmap(self.get_Mcl_int, (0))(jnp.arange(1))[0]
         if doyclonly:
             return
 
@@ -89,7 +93,11 @@ class get_power_BCMP:
         self.uyl_mat = jnp.moveaxis(setup_power_BCMP_obj.uyl_mat, 1, 3)
         self.byl_mat = setup_power_BCMP_obj.byl_mat
         self.ukappal_dmb_prefac_mat = jnp.moveaxis(setup_power_BCMP_obj.ukappal_dmb_prefac_mat, 1, 3)
-        self.ukappal_nfw_prefac_mat = jnp.moveaxis(setup_power_BCMP_obj.ukappal_nfw_prefac_mat, 1, 3)        
+        self.bkl_dmb_mat = setup_power_BCMP_obj.bkl_dmb_mat        
+        if self.calc_nfw_only:
+            self.ukappal_nfw_prefac_mat = jnp.moveaxis(setup_power_BCMP_obj.ukappal_nfw_prefac_mat, 1, 3)        
+            self.bkl_nfw_mat = setup_power_BCMP_obj.bkl_nfw_mat
+            
         self.Pklin_lz_mat = setup_power_BCMP_obj.Pklin_lz_mat
         self.Pknonlin_lz_mat = setup_power_BCMP_obj.Pknonlin_lz_mat
         self.ell_array = setup_power_BCMP_obj.ell_array
@@ -97,10 +105,11 @@ class get_power_BCMP:
         self.bh = setup_power_BCMP_obj.bh
         self.nell = len(self.ell_array)
 
+        
         nz_info_dict = analysis_dict['nz_info_dict']
         self.nbins = nz_info_dict['nbins']
         self.z_array_nz = jnp.array(nz_info_dict['z_array'])
-        self.zmax = 10#self.z_array_nz[-1]
+        self.zmax = self.z_array_nz[-1]
         pzs_inp_mat = np.zeros((self.nbins, len(self.z_array_nz)))
         for jb in range(self.nbins):
             pzs_inp_mat[jb, :] = nz_info_dict['nz' + str(jb)]
@@ -114,7 +123,6 @@ class get_power_BCMP:
         vmap_func1 = vmap(self.weak_lensing_kernel, (0, None))
         vmap_func2 = vmap(vmap_func1, (None, 0))
         self.Wk_mat = vmap_func2(jnp.arange(self.nbins), jnp.arange(self.nz)).T
-        # self.Wk_mat = self.Wk_mat
         if verbose_time:
             print('Time for computing Wk_mat: ', time.time() - ti)
             ti = time.time()
@@ -175,16 +183,56 @@ class get_power_BCMP:
                 print('Time for computing Cl_kappa_kappa_2h_mat: ', time.time() - ti)
                 # print('Total time for computing all Cls: ', time.time() - t0)
                 ti = time.time()                
+        if analysis_dict.get('do_yy', False):
+            self.Cl_y_y_1h_mat = vmap(self.get_Cl_y_y_1h)(jnp.arange(self.nell))
+            if verbose_time:
+                print('Time for computing Cl_y_y_1h_mat: ', time.time() - ti)
+                ti = time.time()
 
-            vmap_func1 = vmap(self.get_Cl_kappa_kappa_nfw_1h, (0, None, None))
+            self.Cl_y_y_2h_mat = vmap(self.get_Cl_y_y_2h)(jnp.arange(self.nell))
+            if verbose_time:
+                print('Time for computing Cl_y_y_2h_mat: ', time.time() - ti)
+                ti = time.time()
+
+        if analysis_dict['do_shear2pt']:
+            vmap_func1 = vmap(self.get_Cl_kappa_kappa_1h, (0, None, None))
             vmap_func2 = vmap(vmap_func1, (None, 0, None))
             vmap_func3 = vmap(vmap_func2, (None, None, 0))
-            self.Cl_kappa_kappa_nfw_1h_mat = vmap_func3(jnp.arange(self.nbins), jnp.arange(self.nbins), jnp.arange(self.nell)).T
+            self.Cl_kappa_kappa_1h_mat = vmap_func3(jnp.arange(self.nbins), jnp.arange(self.nbins), jnp.arange(self.nell)).T
             if verbose_time:
-                print('Time for computing Cl_kappa_kappa_nfw_1h_mat: ', time.time() - ti)
-                print('Total time for computing all Cls: ', time.time() - t0)                
-                # ti = time.time()
-            self.kcut = kcut
+                print('Time for computing Cl_kappa_kappa_1h_mat: ', time.time() - ti)
+                ti = time.time()
+
+            vmap_func1 = vmap(self.get_Cl_kappa_kappa_2h, (0, None, None))
+            vmap_func2 = vmap(vmap_func1, (None, 0, None))
+            vmap_func3 = vmap(vmap_func2, (None, None, 0))
+            self.Cl_kappa_kappa_2h_mat = vmap_func3(jnp.arange(self.nbins), jnp.arange(self.nbins), jnp.arange(self.nell)).T
+            if verbose_time:
+                print('Time for computing Cl_kappa_kappa_2h_mat: ', time.time() - ti)
+                # print('Total time for computing all Cls: ', time.time() - t0)
+                ti = time.time()                
+
+            if self.calc_nfw_only:
+                vmap_func1 = vmap(self.get_Cl_kappa_kappa_nfw_1h, (0, None, None))
+                vmap_func2 = vmap(vmap_func1, (None, 0, None))
+                vmap_func3 = vmap(vmap_func2, (None, None, 0))
+                self.Cl_kappa_kappa_nfw_1h_mat = vmap_func3(jnp.arange(self.nbins), jnp.arange(self.nbins), jnp.arange(self.nell)).T
+                if verbose_time:
+                    print('Time for computing Cl_kappa_kappa_nfw_1h_mat: ', time.time() - ti)
+                    # print('Total time for computing all Cls: ', time.time() - t0)                
+                    ti = time.time()
+
+                vmap_func1 = vmap(self.get_Cl_kappa_kappa_nfw_2h, (0, None, None))
+                vmap_func2 = vmap(vmap_func1, (None, 0, None))
+                vmap_func3 = vmap(vmap_func2, (None, None, 0))
+                self.Cl_kappa_kappa_nfw_2h_mat = vmap_func3(jnp.arange(self.nbins), jnp.arange(self.nbins), jnp.arange(self.nell)).T
+                if verbose_time:
+                    print('Time for computing Cl_kappa_kappa_2h_mat: ', time.time() - ti)
+                    print('Total time for computing all Cls: ', time.time() - t0)
+                    # ti = time.time()                
+
+
+
             vmap_func1 = vmap(self.get_Cl_kappa_kappa_halofit, (0, None, None))
             vmap_func2 = vmap(vmap_func1, (None, 0, None, ))
             vmap_func3 = vmap(vmap_func2, (None, None, 0, ))
@@ -198,7 +246,7 @@ class get_power_BCMP:
 
     @partial(jit, static_argnums=(0))
     def get_ycl_int(self, dummy):
-        fx_intc = jnp.trapz(self.ycl*self.p_logc_Mz, x=self.logc_array)/jnp.trapz(self.p_logc_Mz, x=self.logc_array)
+        fx_intc = jnp.trapz(jnp.log(self.ycl)*self.p_logc_Mz, x=self.logc_array)/jnp.trapz(self.p_logc_Mz, x=self.logc_array)
         yall=[]
         for i in range(self.nM):
             nc = self.hmf_Mz_mat[:,i]
@@ -213,13 +261,49 @@ class get_power_BCMP:
             
             def integrand(z_prime):
                 return jnp.interp(z_prime, self.z_array, fx)
-            fx_intz = simps(integrand, self.z_array[0], self.z_array[-1], 128)/norm
+            fx_intz = jnp.exp(simps(integrand, self.z_array[0], self.z_array[-1], 128)/norm)
             yall.append(fx_intz)
         return jnp.array(yall)
 
-    @partial(jit, static_argnums=(0,1))
-    def get_weak_lensing_kernel_z(self, jb, z):
-        chi = jnp.interp(z, self.z_array, self.chi_array)
+
+    def get_Mcl_int(self, dummy):
+        fx_intc = jnp.trapz(jnp.log(self.Mcl)*self.p_logc_Mz, x=self.logc_array)/jnp.trapz(self.p_logc_Mz, x=self.logc_array)
+        yall=[]
+        for i in range(self.nM):
+            nc = self.hmf_Mz_mat[:,i]
+            #nc = nc.at[jnp.where(self.z_array<self.zbin[0])].set(0)
+            #nc  = nc.at[jnp.where(self.z_array>self.zbin[1])].set(0)
+            fx = fx_intc[:,i]* (self.chi_array ** 2) * self.dchi_dz_array*nc
+            
+            @vmap
+            def integrand_norm(z_prime):
+                return jnp.interp(z_prime, self.z_array, (self.chi_array ** 2) * self.dchi_dz_array*nc)
+            norm = simps(integrand_norm, self.z_array[0], self.z_array[-1], 128)
+            
+            def integrand(z_prime):
+                return jnp.interp(z_prime, self.z_array, fx)
+            fx_intz = jnp.exp(simps(integrand, self.z_array[0], self.z_array[-1], 128)/norm)
+            yall.append(fx_intz)
+        return jnp.array(yall)
+
+
+
+
+
+
+
+        
+    @partial(jit, static_argnums=(0,))
+    def weak_lensing_kernel(self, jb, jz):
+        """
+        Returns a weak lensing kernel
+
+        Note: this function handles differently nzs that correspond to extended redshift
+        distribution, and delta functions.
+        """
+        z = self.z_array[jz]
+        chi = self.chi_array[jz]
+
         @vmap
         def integrand(z_prime):
             #chi_prime = jnp.exp(jnp.interp(z_prime, self.z_array, jnp.log(self.chi_array)))
@@ -232,7 +316,6 @@ class get_power_BCMP:
             dndz = (jnp.interp(z_prime, self.z_array_nz, self.pzs_inp_mat[jb, :]))
             return dndz
 
-        radial_kernel = simps(integrand, z, self.zmax, 128) * (1.0 + z) * chi/simps(integrand_norm, self.z_array_nz[0], self.z_array_nz[-1], 128)
         H0 = 100.0
         c = const.c.value * 1e-3
         constant_factor = 3.0 * H0**2 * self.cosmo_jax.Omega_m / (2.0 * (c**2))
@@ -271,6 +354,33 @@ class get_power_BCMP:
         ell_factor = jnp.sqrt((ell - 1) * (ell) * (ell + 1) * (ell + 2)) / (ell + 0.5) ** 2
         return constant_factor * ell_factor * radial_kernel
 
+    @partial(jit, static_argnums=(0,))
+    def get_Cl_y_y_1h(self, jl):
+        """
+        Computes the 1-halo term of the cross-spectrum between the convergence and the
+        Compton-y map.
+        """
+        uyl_jl = self.uyl_mat[jl, ...]        
+        fx = uyl_jl * uyl_jl * self.p_logc_Mz
+        fx_intc = jnp.trapz(fx, x=self.logc_array)
+        fx = fx_intc * self.hmf_Mz_mat
+        fx_intM = jnp.trapz(fx, x=jnp.log(self.M_array))
+        fx = fx_intM * (self.chi_array ** 2) * self.dchi_dz_array
+        fx_intz = jnp.trapz(fx, x=self.z_array)
+        return fx_intz
+    
+    @partial(jit, static_argnums=(0,))
+    def get_Cl_y_y_2h(self, jl):
+        """
+        Computes the 1-halo term of the cross-spectrum between the convergence and the
+        Compton-y map.
+        """
+        byl_jl = self.byl_mat[jl]
+        
+        fx = byl_jl * byl_jl * (self.chi_array ** 2) * self.dchi_dz_array * self.Pklin_lz_mat[jl]
+        fx_intz = jnp.trapz(fx, x=self.z_array)
+        return fx_intz
+
 
     @partial(jit, static_argnums=(0,))
     def get_Cl_kappa_y_1h(self, jb, jl):
@@ -299,9 +409,10 @@ class get_power_BCMP:
         """
         Wk_jb = self.Wk_mat[jb]
         prefac_for_uk = Wk_jb/(self.chi_array**2)
+        bkl_jl = self.bkl_dmb_mat[jl]
         byl_jl = self.byl_mat[jl]
         
-        fx = byl_jl * prefac_for_uk  * (self.chi_array ** 2) * self.dchi_dz_array * self.Pklin_lz_mat[jl]
+        fx = byl_jl * bkl_jl * prefac_for_uk  * (self.chi_array ** 2) * self.dchi_dz_array * self.Pklin_lz_mat[jl]
         fx_intz = jnp.trapz(fx, x=self.z_array)
         return fx_intz
 
@@ -337,8 +448,9 @@ class get_power_BCMP:
         prefac_for_uk1 = Wk_jb1/(self.chi_array**2)
         Wk_jb2 = self.Wk_mat[jb2]
         prefac_for_uk2 = Wk_jb2/(self.chi_array**2)
+        bkl_jl = self.bkl_dmb_mat[jl]
         
-        fx = prefac_for_uk1 * prefac_for_uk2  * (self.chi_array ** 2) * self.dchi_dz_array * self.Pklin_lz_mat[jl]
+        fx = (bkl_jl**2) * prefac_for_uk1 * prefac_for_uk2  * (self.chi_array ** 2) * self.dchi_dz_array * self.Pklin_lz_mat[jl]
         fx_intz = jnp.trapz(fx, x=self.z_array)
         return fx_intz
 
@@ -412,6 +524,21 @@ class get_power_BCMP:
         return fx_intz
 
 
+    @partial(jit, static_argnums=(0,))
+    def get_Cl_kappa_kappa_nfw_2h(self, jb1, jb2, jl):
+        """
+        Computes the 1-halo term of the cross-spectrum between the convergence and the
+        Compton-y map.
+        """
+        Wk_jb1 = self.Wk_mat[jb1]
+        prefac_for_uk1 = Wk_jb1/(self.chi_array**2)
+        Wk_jb2 = self.Wk_mat[jb2]
+        prefac_for_uk2 = Wk_jb2/(self.chi_array**2)
+        bkl_jl = self.bkl_nfw_mat[jl]
+        
+        fx = (bkl_jl**2) * prefac_for_uk1 * prefac_for_uk2  * (self.chi_array ** 2) * self.dchi_dz_array * self.Pklin_lz_mat[jl]
+        fx_intz = jnp.trapz(fx, x=self.z_array)
+        return fx_intz
 
     #@partial(jit, static_argnums=(0,))
     def get_Cl_kappa_M_1h(self, jb1, jl):

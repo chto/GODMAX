@@ -71,10 +71,10 @@ consistency with the :math:`{\\rm Mpc}` and :math:`M_{\odot}` units."""
 # ASTRONOMY CONSTANTS
 ###################################################################################################
 
-RHO_CRIT_0_KPC3 = 2.77536627245708E2
+RHO_CRIT_0_KPC3 = 2.7750E2 #To be consistent with jax_cosmo
 """The critical density of the universe at z = 0 in units of :math:`M_{\odot} h^2 / {\\rm kpc}^3`."""
 
-RHO_CRIT_0_MPC3 = 2.77536627245708E11
+RHO_CRIT_0_MPC3 = 2.7750E11
 """The critical density of the universe at z = 0 in units of :math:`M_{\odot} h^2 / {\\rm Mpc}^3`."""
 
 DELTA_COLLAPSE = 1.68647
