@@ -26,11 +26,13 @@ class get_power_BCMP:
                 analysis_dict,
                 num_points_trapz_int=64,
                 setup_power_BCMP_obj=None,
-                verbose_time=False,doyclonly=False, kcut=None
+                verbose_time=False,doyclonly=False, kcut=None, customizedpower=None
             ):    
+        self.customizedpower=customizedpower
 
         if verbose_time:
             t0 = time.time()
+        self.kcut=kcut
 
         self.cosmo_params = sim_params_dict['cosmo']
         self.zbin=[0.3,0.45]
@@ -50,6 +52,7 @@ class get_power_BCMP:
             ti = time.time()
         if setup_power_BCMP_obj is None:
             setup_power_BCMP_obj = setup_power_BCMP(sim_params_dict, halo_params_dict, analysis_dict, num_points_trapz_int=num_points_trapz_int, verbose_time=verbose_time)
+        self.setup_power_BCMP_obj = setup_power_BCMP_obj
         if verbose_time:
             print('Time for setup_power_BCMP: ', time.time() - ti)
             ti = time.time()
@@ -79,8 +82,16 @@ class get_power_BCMP:
             ti = time.time()
 
         self.hmf_Mz_mat = setup_power_BCMP_obj.hmf_Mz_mat
-        self.ycl= setup_power_BCMP_obj.ycl
-        self.ycl_integrated = vmap(self.get_ycl_int, (0))(jnp.arange(1))[0]
+        if 'doy' in analysis_dict.keys():
+            if analysis_dict['doy']:
+                doycl=True
+            else:
+                doycl=False
+        else:
+            doycl=True
+        if doycl:
+            self.ycl= setup_power_BCMP_obj.ycl
+            self.ycl_integrated = vmap(self.get_ycl_int, (0))(jnp.arange(1))[0]
         self.Mcl = setup_power_BCMP_obj.Mcl
         self.Mcl500_integrated = vmap(self.get_Mcl_int, (0))(jnp.arange(1))[0]
         if doyclonly:
@@ -246,6 +257,7 @@ class get_power_BCMP:
 
     @partial(jit, static_argnums=(0))
     def get_ycl_int(self, dummy):
+        #We now change the unit to Mpc^2/h^2
         fx_intc = jnp.trapz(jnp.log(self.ycl)*self.p_logc_Mz, x=self.logc_array)/jnp.trapz(self.p_logc_Mz, x=self.logc_array)
         yall=[]
         for i in range(self.nM):
@@ -315,22 +327,12 @@ class get_power_BCMP:
         def integrand_norm(z_prime):
             dndz = (jnp.interp(z_prime, self.z_array_nz, self.pzs_inp_mat[jb, :]))
             return dndz
+        radial_kernel = simps(integrand, z, self.zmax, 128) * (1.0 + z) * chi
 
         H0 = 100.0
         c = const.c.value * 1e-3
         constant_factor = 3.0 * H0**2 * self.cosmo_jax.Omega_m / (2.0 * (c**2))
         return constant_factor * radial_kernel
-
-    @partial(jit, static_argnums=(0,1))
-    def weak_lensing_kernel(self, jb, jz):
-        """
-        Returns a weak lensing kernel
-
-        Note: this function handles differently nzs that correspond to extended redshift
-        distribution, and delta functions.
-        """
-        z = self.z_array[jz]
-        return jnp.squeeze(self.get_weak_lensing_kernel_z(jb, z))
 
 
 
@@ -468,6 +470,41 @@ class get_power_BCMP:
         powerspectra[~np.isfinite(powerspectra)] =0
         return powerspectra
     #@partial(jit, static_argnums=(0,))
+
+    @partial(jit, static_argnums=(0,1))
+    def get_weak_lensing_kernel_z(self, jb, z):
+        chi = jnp.interp(z, self.z_array, self.chi_array)
+        @vmap
+        def integrand(z_prime):
+            #chi_prime = jnp.exp(jnp.interp(z_prime, self.z_array, jnp.log(self.chi_array)))
+            #chi_prime = radial_comoving_distance(self.cosmo_jax, 1.0/(1.0+z_prime))
+            chi_prime = jnp.exp(jnp.interp(z_prime, self.za, jnp.log(self.chia)))
+            dndz = (jnp.interp(z_prime, self.z_array_nz, self.pzs_inp_mat[jb, :]))
+            return dndz * jnp.clip(chi_prime - chi, 0) / jnp.clip(chi_prime, 1)
+        @vmap
+        def integrand_norm(z_prime):
+            dndz = (jnp.interp(z_prime, self.z_array_nz, self.pzs_inp_mat[jb, :]))
+            return dndz
+
+        radial_kernel = simps(integrand, z, self.zmax, 128) * (1.0 + z) * chi/simps(integrand_norm, self.z_array_nz[0], self.z_array_nz[-1], 128)
+        H0 = 100.0
+        c = const.c.value * 1e-3
+        constant_factor = 3.0 * H0**2 * self.cosmo_jax.Omega_m / (2.0 * (c**2))
+        return constant_factor * radial_kernel
+
+    @partial(jit, static_argnums=(0,1))
+    def weak_lensing_kernel(self, jb, jz):
+        """
+        Returns a weak lensing kernel
+
+        Note: this function handles differently nzs that correspond to extended redshift
+        distribution, and delta functions.
+        """
+        z = self.z_array[jz]
+        return jnp.squeeze(self.get_weak_lensing_kernel_z(jb, z))
+
+
+
     def get_Cl_kappa_kappa_halofit(self, jb1, jb2, jl):
         """
         Computes the 1-halo term of the cross-spectrum between the convergence and the
@@ -493,6 +530,8 @@ class get_power_BCMP:
             prefac_for_uk2 = Wk_jb2/jnp.clip(chi**2, 1.0)
             if rcut is not None:
                 p = interp((z_prime, k))
+            elif self.customizedpower is not None:
+                p = self.customizedpower(k, 1/(1+z_prime))
             else:
                 p = power.nonlinear_matter_power(self.cosmo_jax, k, 1/(1+z_prime))
             fx = ((self.ell_array[jl]+2)*(self.ell_array[jl]+1)*(self.ell_array[jl])*(self.ell_array[jl]-1)/((self.ell_array[jl] + 0.5) ** 4))*prefac_for_uk1 * prefac_for_uk2  * (chi** 2) * dchi_dz * p 

@@ -413,14 +413,15 @@ class BCM_18_wP:
         return rho_gas_unnorm    
 
     @partial(jit, static_argnums=(0,))
-    def get_rho_gas_norm(self, jc, jz, jM, rmax_r200c=20):
+    def get_rho_gas_norm(self, jc, jz, jM, rmax_r200c=40):
         '''This is the normalization of the gas profile'''
         # int_unnorm_prof = simps(
         #     lambda x: get_rho_gas_unnorm(x) * 4 * jnp.pi * x**2, 5e-4, rmax_r200c * r200c,
         #     int_simps_points
         #     )        
         r200c = self.r200c_mat[jM, jz]
-        logx = jnp.linspace(jnp.log(jnp.minimum(5e-4, 0.005*jnp.minimum(5e-4, 0.005*r200c))), jnp.log(rmax_r200c*r200c), self.num_points_trapz_int)
+
+        logx = jnp.linspace(jnp.log(jnp.minimum(5e-4, 0.005*r200c)), jnp.log(rmax_r200c*r200c), self.num_points_trapz_int)
         # x = jnp.exp(logx)
         # fx = (vmap(self.get_rho_gas_unnorm, (0, None, None,None))(jnp.arange(len(logx)), jz, jM, x))*(4*jnp.pi*x**2) * x
         # int_unnorm_prof = jnp.trapz(fx, x=logx)
@@ -438,7 +439,7 @@ class BCM_18_wP:
             r = r_array_here[jr]
         u = r / self.r_co_mat[jM, jz]
         v = r / self.r_ej_mat[jM, jz]
-        rho_gas_unnorm = 1 / (jnp.power(1 + u, self.beta_mat[jM, jz]) * jnp.power(1 + v**2, (7 - self.beta_mat[jM, jz]) / 2.))
+        rho_gas_unnorm = 1 / (jnp.power(1 + u, self.beta_mat[jM, jz]) * jnp.power(1 + v**self.gamma_rhogas, (self.delta_rhogas - self.beta_mat[jM, jz]) / self.gamma_rhogas)) #1 / (jnp.power(1 + u, self.beta_mat[jM, jz]) * jnp.power(1 + v**2, (7 - self.beta_mat[jM, jz]) / 2.))
         prefac = self.rho_gas_norm_mat[jc, jz, jM]
         return prefac * rho_gas_unnorm
 
@@ -539,7 +540,7 @@ class BCM_18_wP:
         fx2 = jnp.interp(logx, jnp.log(self.r_array), self.Mdmb_mat[:,jc, jz, jM])
         fx = (fx1 * fx2 * G_new / x**2) * x
         Ptot = jnp.trapz(fx, x=logx)
-        Ptot = jnp.clip(Ptot, 1e-30)
+        Ptot = jnp.clip(Ptot, 1e-30)* (self.cosmo_jax.h)**2
         return Ptot
     
     @partial(jit, static_argnums=(0,))
