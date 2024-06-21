@@ -181,6 +181,7 @@ class BCM_18_wP:
         vmap_func3 = vmap(vmap_func2, (None, None, 0, None))
         vmap_func4 = vmap(vmap_func3, (None, None, None, 0))
         self.rho_gas_mat = vmap_func4(jnp.arange(nr), jnp.arange(nc), jnp.arange(nz), jnp.arange(nM)).T
+        self.rho_gas_mat_physical = self.rho_gas_mat / (self.scale_fac_a_array[None, None, :, None] ** 3)
 
         vmap_func1 = vmap(self.get_zeta, (0, None, None, None))
         vmap_func2 = vmap(vmap_func1, (None, 0, None, None))
@@ -213,6 +214,7 @@ class BCM_18_wP:
         vmap_func3 = vmap(vmap_func2, (None, None, 0, None))
         vmap_func4 = vmap(vmap_func3, (None, None, None, 0))
         self.Ptot_mat = vmap_func4(jnp.arange(nr), jnp.arange(nc), jnp.arange(nz), jnp.arange(nM)).T
+        self.Ptot_mat_physical = self.Ptot_mat / (self.scale_fac_a_array[None, None, :, None] ** 4)
 
         vmap_func1 = vmap(self.get_Pnt_fac, (0, None, None, None))
         vmap_func2 = vmap(vmap_func1, (None, 0, None, None))
@@ -227,6 +229,7 @@ class BCM_18_wP:
 
         self.Pnt_mat = self.Pnt_fac * self.Ptot_mat
         self.Pth_mat = self.Ptot_mat * jnp.maximum(0, 1 - (self.Pnt_mat / self.Ptot_mat))
+        self.Pth_mat_physical = self.Ptot_mat_physical * jnp.maximum(0, 1 - self.Pnt_fac)
 
         if verbose_time:
             tf = time.time()
@@ -413,7 +416,7 @@ class BCM_18_wP:
         return rho_gas_unnorm    
 
     @partial(jit, static_argnums=(0,))
-    def get_rho_gas_norm(self, jc, jz, jM, rmax_r200c=40):
+    def get_rho_gas_norm(self, jc, jz, jM, rmax_r200c=16):
         '''This is the normalization of the gas profile'''
         # int_unnorm_prof = simps(
         #     lambda x: get_rho_gas_unnorm(x) * 4 * jnp.pi * x**2, 5e-4, rmax_r200c * r200c,
@@ -421,7 +424,7 @@ class BCM_18_wP:
         #     )        
         r200c = self.r200c_mat[jM, jz]
 
-        logx = jnp.linspace(jnp.log(jnp.minimum(5e-4, 0.005*r200c)), jnp.log(rmax_r200c*r200c), self.num_points_trapz_int)
+        logx = jnp.linspace(jnp.log(0.01*r200c), jnp.log(rmax_r200c*r200c), self.num_points_trapz_int)
         # x = jnp.exp(logx)
         # fx = (vmap(self.get_rho_gas_unnorm, (0, None, None,None))(jnp.arange(len(logx)), jz, jM, x))*(4*jnp.pi*x**2) * x
         # int_unnorm_prof = jnp.trapz(fx, x=logx)

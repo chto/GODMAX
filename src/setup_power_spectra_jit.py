@@ -152,7 +152,7 @@ class setup_power_BCMP:
         self.const_coeff = ((coeff * oneMpc_h).to(((u.cm ** 3) / u.eV))).value
         Y=0.24
         self.Pe_conv_fac =  (4-2*Y)/(8-5*Y)
-        self.y3d_mat = self.Pe_conv_fac * self.const_coeff * BCMP_obj.Pth_mat
+        self.y3d_mat = self.Pe_conv_fac * self.const_coeff * BCMP_obj.Pth_mat_physical
 
 
         zmin, zmax, nz = halo_params_dict['zmin'], halo_params_dict['zmax'], halo_params_dict['nz']
