@@ -183,18 +183,18 @@ class get_corrfunc_BCMP:
 
 
 
-
-        self.Cl_kappa_kappa_2h = get_power_BCMP_obj.Cl_kappa_kappa_2h_mat
-        Cl_kappa_kappa_2h_min = jnp.min(jnp.absolute(self.Cl_kappa_kappa_2h))
-        self.logCl_kappa_kappa_2h_clipped = jnp.log(jnp.clip(self.Cl_kappa_kappa_2h, Cl_kappa_kappa_2h_min + 1e-30))
-        interp2h = lambda jb1, jb2, logell: jnp.exp(jnp.interp(logell, self.log_ell_array, self.logCl_kappa_kappa_2h_clipped[jb1, jb2, :]))
-        vmap1 = vmap(interp2h, (0, None, None))
-        vmap2 = vmap(vmap1, (None, 0, None))
-        vmap3 = vmap(vmap2, (None, None, 0))            
-        self.Cl_kappa_kappa_2h_ell_transf = vmap3(jnp.arange(self.nbins), jnp.arange(self.nbins), self.log_ell_array_transf).T
-        self.Cl_kappa_kappa_halofit_mat = get_power_BCMP_obj.Cl_kappa_kappa_halofit_mat
-        self.xip_2h_out_mat = vmap(self.get_Hankel_xip_2h)(jnp.arange(len(self.angles_data_array)))            
-        self.xim_2h_out_mat = vmap(self.get_Hankel_xim_2h)(jnp.arange(len(self.angles_data_array)))            
+         if analysis_dict['do_shear2pt_DM'] or analysis_dict['do_shear2pt']: 
+            self.Cl_kappa_kappa_2h = get_power_BCMP_obj.Cl_kappa_kappa_2h_mat
+            Cl_kappa_kappa_2h_min = jnp.min(jnp.absolute(self.Cl_kappa_kappa_2h))
+            self.logCl_kappa_kappa_2h_clipped = jnp.log(jnp.clip(self.Cl_kappa_kappa_2h, Cl_kappa_kappa_2h_min + 1e-30))
+            interp2h = lambda jb1, jb2, logell: jnp.exp(jnp.interp(logell, self.log_ell_array, self.logCl_kappa_kappa_2h_clipped[jb1, jb2, :]))
+            vmap1 = vmap(interp2h, (0, None, None))
+            vmap2 = vmap(vmap1, (None, 0, None))
+            vmap3 = vmap(vmap2, (None, None, 0))            
+            self.Cl_kappa_kappa_2h_ell_transf = vmap3(jnp.arange(self.nbins), jnp.arange(self.nbins), self.log_ell_array_transf).T
+            self.Cl_kappa_kappa_halofit_mat = get_power_BCMP_obj.Cl_kappa_kappa_halofit_mat
+            self.xip_2h_out_mat = vmap(self.get_Hankel_xip_2h)(jnp.arange(len(self.angles_data_array)))            
+            self.xim_2h_out_mat = vmap(self.get_Hankel_xim_2h)(jnp.arange(len(self.angles_data_array)))            
 
 
 
