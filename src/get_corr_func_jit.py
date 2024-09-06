@@ -183,7 +183,7 @@ class get_corrfunc_BCMP:
 
 
 
-         if analysis_dict['do_shear2pt_DM'] or analysis_dict['do_shear2pt']: 
+        if analysis_dict['do_shear2pt_DM'] or analysis_dict['do_shear2pt']: 
             self.Cl_kappa_kappa_2h = get_power_BCMP_obj.Cl_kappa_kappa_2h_mat
             Cl_kappa_kappa_2h_min = jnp.min(jnp.absolute(self.Cl_kappa_kappa_2h))
             self.logCl_kappa_kappa_2h_clipped = jnp.log(jnp.clip(self.Cl_kappa_kappa_2h, Cl_kappa_kappa_2h_min + 1e-30))
