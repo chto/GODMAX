@@ -2,6 +2,7 @@ from setup_power_spectra_jit import setup_power_BCMP
 import jax.numpy as jnp
 from jax import jit, vmap
 import numpy as np
+import jax.scipy.integrate as jsi
 from jax import vmap
 from jax_cosmo import Cosmology
 from functools import partial
@@ -258,7 +259,7 @@ class get_power_BCMP:
     @partial(jit, static_argnums=(0))
     def get_ycl_int(self, dummy):
         #We now change the unit to Mpc^2/h^2
-        fx_intc = jnp.trapz(jnp.log(self.ycl)*self.p_logc_Mz, x=self.logc_array)/jnp.trapz(self.p_logc_Mz, x=self.logc_array)
+        fx_intc = jsi.trapezoid(jnp.log(self.ycl)*self.p_logc_Mz, x=self.logc_array)/jsi.trapezoid(self.p_logc_Mz, x=self.logc_array)
         yall=[]
         for i in range(self.nM):
             nc = self.hmf_Mz_mat[:,i]
@@ -279,7 +280,7 @@ class get_power_BCMP:
 
 
     def get_Mcl_int(self, dummy):
-        fx_intc = jnp.trapz(jnp.log(self.Mcl)*self.p_logc_Mz, x=self.logc_array)/jnp.trapz(self.p_logc_Mz, x=self.logc_array)
+        fx_intc = jsi.trapezoid(jnp.log(self.Mcl)*self.p_logc_Mz, x=self.logc_array)/jsi.trapezoid(self.p_logc_Mz, x=self.logc_array)
         yall=[]
         for i in range(self.nM):
             nc = self.hmf_Mz_mat[:,i]
@@ -364,11 +365,11 @@ class get_power_BCMP:
         """
         uyl_jl = self.uyl_mat[jl, ...]        
         fx = uyl_jl * uyl_jl * self.p_logc_Mz
-        fx_intc = jnp.trapz(fx, x=self.logc_array)
+        fx_intc = jsi.trapezoid(fx, x=self.logc_array)
         fx = fx_intc * self.hmf_Mz_mat
-        fx_intM = jnp.trapz(fx, x=jnp.log(self.M_array))
+        fx_intM = jsi.trapezoid(fx, x=jnp.log(self.M_array))
         fx = fx_intM * (self.chi_array ** 2) * self.dchi_dz_array
-        fx_intz = jnp.trapz(fx, x=self.z_array)
+        fx_intz = jsi.trapezoid(fx, x=self.z_array)
         return fx_intz
     
     @partial(jit, static_argnums=(0,))
@@ -380,7 +381,7 @@ class get_power_BCMP:
         byl_jl = self.byl_mat[jl]
         
         fx = byl_jl * byl_jl * (self.chi_array ** 2) * self.dchi_dz_array * self.Pklin_lz_mat[jl]
-        fx_intz = jnp.trapz(fx, x=self.z_array)
+        fx_intz = jsi.trapezoid(fx, x=self.z_array)
         return fx_intz
 
 
@@ -396,11 +397,11 @@ class get_power_BCMP:
         ukl_jl = self.ukappal_dmb_prefac_mat[jl, ...]
         
         fx = uyl_jl * ukl_jl * self.p_logc_Mz
-        fx_intc = jnp.trapz(fx, x=self.logc_array)
+        fx_intc = jsi.trapezoid(fx, x=self.logc_array)
         fx = fx_intc * self.hmf_Mz_mat
-        fx_intM = jnp.trapz(fx, x=jnp.log(self.M_array))
+        fx_intM = jsi.trapezoid(fx, x=jnp.log(self.M_array))
         fx = fx_intM * prefac_for_uk  * (self.chi_array ** 2) * self.dchi_dz_array
-        fx_intz = jnp.trapz(fx, x=self.z_array)
+        fx_intz = jsi.trapezoid(fx, x=self.z_array)
         return fx_intz
 
     @partial(jit, static_argnums=(0,))
@@ -415,7 +416,7 @@ class get_power_BCMP:
         byl_jl = self.byl_mat[jl]
         
         fx = byl_jl * bkl_jl * prefac_for_uk  * (self.chi_array ** 2) * self.dchi_dz_array * self.Pklin_lz_mat[jl]
-        fx_intz = jnp.trapz(fx, x=self.z_array)
+        fx_intz = jsi.trapezoid(fx, x=self.z_array)
         return fx_intz
 
 
@@ -433,11 +434,11 @@ class get_power_BCMP:
         ukl_jl = self.ukappal_dmb_prefac_mat[jl]       
         
         fx = ukl_jl * ukl_jl * self.p_logc_Mz
-        fx_intc = jnp.trapz(fx, x=self.logc_array)
+        fx_intc = jsi.trapezoid(fx, x=self.logc_array)
         fx = fx_intc * self.hmf_Mz_mat
-        fx_intM = jnp.trapz(fx, x=jnp.log(self.M_array))
+        fx_intM = jsi.trapezoid(fx, x=jnp.log(self.M_array))
         fx = fx_intM * prefac_for_uk1 * prefac_for_uk2 * (self.chi_array ** 2) * self.dchi_dz_array
-        fx_intz = jnp.trapz(fx, x=self.z_array)
+        fx_intz = jsi.trapezoid(fx, x=self.z_array)
         return fx_intz
 
     @partial(jit, static_argnums=(0,))
@@ -453,7 +454,7 @@ class get_power_BCMP:
         bkl_jl = self.bkl_dmb_mat[jl]
         
         fx = (bkl_jl**2) * prefac_for_uk1 * prefac_for_uk2  * (self.chi_array ** 2) * self.dchi_dz_array * self.Pklin_lz_mat[jl]
-        fx_intz = jnp.trapz(fx, x=self.z_array)
+        fx_intz = jsi.trapezoid(fx, x=self.z_array)
         return fx_intz
 
     def nonlinearpowercut(self, rcut=None):
@@ -555,11 +556,11 @@ class get_power_BCMP:
         ukl_jl = self.ukappal_nfw_prefac_mat[jl]       
         
         fx = ukl_jl * ukl_jl * self.p_logc_Mz
-        fx_intc = jnp.trapz(fx, x=self.logc_array)
+        fx_intc = jsi.trapezoid(fx, x=self.logc_array)
         fx = fx_intc * self.hmf_Mz_mat
-        fx_intM = jnp.trapz(fx, x=jnp.log(self.M_array))
+        fx_intM = jsi.trapezoid(fx, x=jnp.log(self.M_array))
         fx = fx_intM * prefac_for_uk1 * prefac_for_uk2 * (self.chi_array ** 2) * self.dchi_dz_array
-        fx_intz = jnp.trapz(fx, x=self.z_array)
+        fx_intz = jsi.trapezoid(fx, x=self.z_array)
         return fx_intz
 
 
@@ -576,7 +577,7 @@ class get_power_BCMP:
         bkl_jl = self.bkl_nfw_mat[jl]
         
         fx = (bkl_jl**2) * prefac_for_uk1 * prefac_for_uk2  * (self.chi_array ** 2) * self.dchi_dz_array * self.Pklin_lz_mat[jl]
-        fx_intz = jnp.trapz(fx, x=self.z_array)
+        fx_intz = jsi.trapezoid(fx, x=self.z_array)
         return fx_intz
 
     #@partial(jit, static_argnums=(0,))
@@ -597,9 +598,9 @@ class get_power_BCMP:
         #p_logc_Mz_givenM = jnp.interp([jnp.log(M)], jnp.log(self.M_array), self.p_logc_Mz_givenM)
         p_logc_Mz_givenM = self.p_logc_Mz[:,-2,:]
         fx = 1 * ukl_jlgiveM * p_logc_Mz_givenM
-        fx_intc = jnp.trapz(fx, x=self.logc_array)*delta_c
+        fx_intc = jsi.trapezoid(fx, x=self.logc_array)*delta_c
         fx = fx_intc * self.hmf_Mz_mat[:,-2]
-        fx_intM = fx #= jnp.trapz(fx, x=jnp.log(self.M_array))
+        fx_intM = fx #= jsi.trapezoid(fx, x=jnp.log(self.M_array))
         fx = fx_intM * prefac_for_uk1 * (self.chi_array ** 2) * self.dchi_dz_array
 
         @vmap
@@ -629,12 +630,12 @@ class get_power_BCMP:
         #p_logc_Mz_givenM = jnp.interp([jnp.log(M)], jnp.log(self.M_array), self.p_logc_Mz_givenM)
         p_logc_Mz_givenM = self.p_logc_Mz[:,-2,:]
         fx = 1 * ukl_jlgiveM * p_logc_Mz_givenM
-        fx_intc = jnp.trapz(fx, x=self.logc_array)*delta_c
+        fx_intc = jsi.trapezoid(fx, x=self.logc_array)*delta_c
         fx = fx_intc * self.hmf_Mz_mat[:,-2]
-        fx_intM = fx #= jnp.trapz(fx, x=jnp.log(self.M_array))
+        fx_intM = fx #= jsi.trapezoid(fx, x=jnp.log(self.M_array))
         fx = fx_intM * prefac_for_uk1 * (self.chi_array ** 2) * self.dchi_dz_array
-        #norm = jnp.trapz(((self.chi_array ** 2) * self.dchi_dz_array)[(self.z_array>self.zbin[0])&(self.z_array<self.zbin[1])], x=self.z_array[(self.z_array>self.zbin[0])&(self.z_array<self.zbin[1])])
-        #fx_intz = jnp.trapz(fx, x=self.z_array)/norm
+        #norm = jsi.trapezoid(((self.chi_array ** 2) * self.dchi_dz_array)[(self.z_array>self.zbin[0])&(self.z_array<self.zbin[1])], x=self.z_array[(self.z_array>self.zbin[0])&(self.z_array<self.zbin[1])])
+        #fx_intz = jsi.trapezoid(fx, x=self.z_array)/norm
         @vmap
         def integrand_norm(z_prime):
             return jnp.interp(z_prime, self.z_array, (self.chi_array ** 2) * self.dchi_dz_array)
@@ -663,8 +664,8 @@ class get_power_BCMP:
 
         
         fx = bh_jl*prefac_for_uk1 * (self.chi_array ** 2) * self.dchi_dz_array * self.Pklin_lz_mat[jl]
-        #norm = jnp.trapz(((self.chi_array ** 2) * self.dchi_dz_array)[(self.z_array>self.zbin[0])&(self.z_array<self.zbin[1])], x=self.z_array[(self.z_array>self.zbin[0])&(self.z_array<self.zbin[1])])
-        #fx_intz = jnp.trapz(fx, x=self.z_array)/norm
+        #norm = jsi.trapezoid(((self.chi_array ** 2) * self.dchi_dz_array)[(self.z_array>self.zbin[0])&(self.z_array<self.zbin[1])], x=self.z_array[(self.z_array>self.zbin[0])&(self.z_array<self.zbin[1])])
+        #fx_intz = jsi.trapezoid(fx, x=self.z_array)/norm
         @vmap
         def integrand_norm(z_prime):
             return jnp.interp(z_prime, self.z_array, (self.chi_array ** 2) * self.dchi_dz_array)

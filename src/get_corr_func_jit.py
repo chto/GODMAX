@@ -1,6 +1,7 @@
 import os
 from get_power_spectra_jit import get_power_BCMP
 import jax.numpy as jnp
+import jax.scipy.integrate as jsi
 from jax import grad, jit, vmap
 import numpy as np
 from jax_cosmo import Cosmology
@@ -9,6 +10,7 @@ import astropy.units as u
 from astropy import constants as const
 RHO_CRIT_0_MPC3 = 2.77536627245708E11
 G_new = ((const.G * (u.M_sun / u.Mpc**3) * (u.M_sun) / (u.Mpc)).to(u.eV / u.cm**3)).value
+import jax.scipy.integrate as jsi
 # from transforms import Hankel
 from mcfit import Hankel
 import time
@@ -312,7 +314,7 @@ class get_corrfunc_BCMP:
         prefac = (self.ell_array_transf**2) * self.J2ltheta_mat[jt,:] * (1/(2*jnp.pi))
         prefac_tiled = jnp.tile(prefac, (self.nbins, 1))
         integrand = prefac_tiled * self.Cl_kappa_y_1h_ell_transf
-        value = jnp.trapz(integrand, jnp.log(self.ell_array_transf), axis=-1)
+        value = jsi.trapezoid(integrand, jnp.log(self.ell_array_transf), axis=-1)
         return value
 
     @partial(jit, static_argnums=(0,))
@@ -320,7 +322,7 @@ class get_corrfunc_BCMP:
         prefac = (self.ell_array_transf**2) * self.J2ltheta_mat[jt,:] * (1/(2*jnp.pi))
         prefac_tiled = jnp.tile(prefac, (self.nbins, 1))
         integrand = prefac_tiled * self.Cl_kappa_y_2h_ell_transf
-        value = jnp.trapz(integrand, jnp.log(self.ell_array_transf), axis=-1)
+        value = jsi.trapezoid(integrand, jnp.log(self.ell_array_transf), axis=-1)
         return value
 
 
@@ -330,7 +332,7 @@ class get_corrfunc_BCMP:
         prefac = (self.ell_array_transf**2) * self.J0ltheta_mat[jt,:] * (1/(2*jnp.pi))
         prefac_tiled = jnp.tile(prefac, (self.nbins,self.nbins, 1))
         integrand = prefac_tiled * self.Cl_kappa_kappa_1h_ell_transf
-        value = jnp.trapz(integrand, jnp.log(self.ell_array_transf), axis=-1)
+        value = jsi.trapezoid(integrand, jnp.log(self.ell_array_transf), axis=-1)
         return value
         """
         H = Hankel(self.ell_array,nu=0, lowring=True, backend="jax")
@@ -347,7 +349,7 @@ class get_corrfunc_BCMP:
         prefac = (self.ell_array_transf**2) * self.J0ltheta_mat[jt,:] * (1/(2*jnp.pi))
         prefac_tiled = jnp.tile(prefac, (self.nbins,self.nbins, 1))
         integrand = prefac_tiled * self.Cl_kappa_kappa_2h_ell_transf
-        value = jnp.trapz(integrand, jnp.log(self.ell_array_transf), axis=-1)
+        value = jsi.trapezoid(integrand, jnp.log(self.ell_array_transf), axis=-1)
         return value    
 
     #@partial(jit, static_argnums=(0,))
@@ -356,7 +358,7 @@ class get_corrfunc_BCMP:
         prefac = (self.ell_array_transf**2) * self.J4ltheta_mat[jt,:] * (1/(2*jnp.pi))
         prefac_tiled = jnp.tile(prefac, (self.nbins,self.nbins, 1))
         integrand = prefac_tiled * self.Cl_kappa_kappa_1h_ell_transf
-        value = jnp.trapz(integrand, jnp.log(self.ell_array_transf), axis=-1)
+        value = jsi.trapezoid(integrand, jnp.log(self.ell_array_transf), axis=-1)
         return value
         """
         H = Hankel(self.ell_array,nu=4, lowring=True, backend="jax")
@@ -376,7 +378,7 @@ class get_corrfunc_BCMP:
         prefac = (self.ell_array_transf**2) * self.J4ltheta_mat[jt,:] * (1/(2*jnp.pi))
         prefac_tiled = jnp.tile(prefac, (self.nbins,self.nbins, 1))
         integrand = prefac_tiled * self.Cl_kappa_kappa_2h_ell_transf
-        value = jnp.trapz(integrand, jnp.log(self.ell_array_transf), axis=-1)
+        value = jsi.trapezoid(integrand, jnp.log(self.ell_array_transf), axis=-1)
         return value    
 
     @partial(jit, static_argnums=(0,))
@@ -434,7 +436,7 @@ class get_corrfunc_BCMP:
         #prefac = (self.ell_array**2) * J2ltheta * (1/(2*jnp.pi))
         #prefac_tiled = jnp.tile(prefac, (self.nbins, 1))
         #integrand = prefac_tiled * self.Cl_kappa_kappa_DM_1h
-        #gty_1h = jnp.trapz(integrand, jnp.log(self.ell_array), axis=-1)
+        #gty_1h = jsi.trapezoid(integrand, jnp.log(self.ell_array), axis=-1)
         #return gty_1h
         H = Hankel(self.ell_array,nu=4, lowring=True, backend="jax")
         y, G = H(self.Cl_kappa_kappa_DM_1h, extrap=False)
@@ -452,7 +454,7 @@ class get_corrfunc_BCMP:
 #        prefac = (self.ell_array**2) * J2ltheta * (1/(2*jnp.pi))
 #        prefac_tiled = jnp.tile(prefac, (self.nbins, 1))
 #        integrand = prefac_tiled * self.Cl_kappa_kappa_halofit_mat
-#        gty_1h = jnp.trapz(integrand, jnp.log(self.ell_array), axis=-1)
+#        gty_1h = jsi.trapezoid(integrand, jnp.log(self.ell_array), axis=-1)
         #return gty_1h    
         H = Hankel(self.ell_array,nu=4, lowring=True, backend="jax")
         y, G = H(self.Cl_kappa_kappa_halofit_mat, extrap=False)
@@ -471,7 +473,7 @@ class get_corrfunc_BCMP:
         #prefac = (self.ell_array**2) * J2ltheta * (1/(2*jnp.pi))
         #prefac_tiled = jnp.tile(prefac, (self.nbins, 1))
         #integrand = prefac_tiled * self.Cl_kappa_kappa_DM_1h
-        #gty_1h = jnp.trapz(integrand, jnp.log(self.ell_array), axis=-1)
+        #gty_1h = jsi.trapezoid(integrand, jnp.log(self.ell_array), axis=-1)
         #return gty_1h
         H = Hankel(self.ell_array,nu=0, lowring=True, backend="jax")
         y, G = H(self.Cl_kappa_kappa_DM_1h, extrap=False)
@@ -492,7 +494,7 @@ class get_corrfunc_BCMP:
         #prefac = (self.ell_array**2) * J2ltheta * (1/(2*jnp.pi))
         #prefac_tiled = jnp.tile(prefac, (self.nbins, 1))
         #integrand = prefac_tiled * self.Cl_kappa_kappa_halofit_mat
-        #gty_1h = jnp.trapz(integrand, jnp.log(self.ell_array), axis=-1)
+        #gty_1h = jsi.trapezoid(integrand, jnp.log(self.ell_array), axis=-1)
         #return gty_1h
         H = Hankel(self.ell_array,nu=0, lowring=True, backend="jax")
         y, G = H(self.Cl_kappa_kappa_halofit_mat, extrap=False)

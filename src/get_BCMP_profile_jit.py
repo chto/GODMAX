@@ -5,6 +5,7 @@ import jax
 jax.config.update('jax_platform_name', platform)
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
+import jax.scipy.integrate as jsi
 from jax import grad, jit, vmap
 import numpy as np
 from jaxopt import Bisection
@@ -241,7 +242,7 @@ class BCM_18_wP:
             fx = (vmap(f, axis_tup)(jnp.arange(len(logx)), jz, jM, x))*(4*jnp.pi*x**2) * x
         else:
             fx = (vmap(f, axis_tup)(jnp.arange(len(logx)), jc, jz, jM, x))*(4*jnp.pi*x**2) * x
-        integral_value = jnp.trapz(fx, x=logx)
+        integral_value = jsi.trapezoid(fx, x=logx)
         return integral_value
 
     def changeMass(self, jM, jz, mdef_old, mdef_new):
@@ -299,7 +300,7 @@ class BCM_18_wP:
         logx = jnp.linspace(jnp.log(jnp.minimum(5e-4, 0.005*r200c)), jnp.log(r200c), self.num_points_trapz_int)
         # x = jnp.exp(logx)
         # fx = (vmap(self.get_rho_nfw_unnorm, (0, None, None, None,None))(jnp.arange(len(logx)), jc, jz, jM, x))*(4*jnp.pi*x**2) * x
-        # int_unnorm_prof = jnp.trapz(fx, x=logx)
+        # int_unnorm_prof = jsi.trapezoid(fx, x=logx)
         int_unnorm_prof = self.logspace_trapezoidal_integral(self.get_rho_nfw_unnorm, logx, jc=jc, jz=jz, jM=jM, axis_tup=(0, None, None, None, None))
         # print(int_unnorm_prof)
         rho_nfw_0 = M200c / int_unnorm_prof
@@ -339,7 +340,7 @@ class BCM_18_wP:
         logx = jnp.linspace(jnp.log(jnp.minimum(5e-4, 0.005*r200c)), jnp.log(rmax_r200c*r200c), self.num_points_trapz_int)
         # x = jnp.exp(logx)
         # fx = (vmap(self.get_rho_nfw_normed, (0, None, None, None,None))(jnp.arange(len(logx)), jc, jz, jM, x))*(4*jnp.pi*x**2) * x
-        # Mtot = jnp.trapz(fx, x=logx)
+        # Mtot = jsi.trapezoid(fx, x=logx)
         Mtot = self.logspace_trapezoidal_integral(self.get_rho_nfw_normed, logx, jc=jc, jz=jz, jM=jM, axis_tup=(0, None, None, None, None))
         return Mtot
 
@@ -356,7 +357,7 @@ class BCM_18_wP:
         logx = jnp.linspace(jnp.log(minr), jnp.log(r), self.num_points_trapz_int)
         # x = jnp.exp(logx)
         # fx = (vmap(self.get_rho_nfw_normed, (0, None, None, None,None))(jnp.arange(len(logx)), jc, jz, jM, x))*(4*jnp.pi*x**2) * x
-        # Mnfw = jnp.trapz(fx, x=logx)
+        # Mnfw = jsi.trapezoid(fx, x=logx)
         Mnfw = self.logspace_trapezoidal_integral(self.get_rho_nfw_normed, logx, jc=jc, jz=jz, jM=jM, axis_tup=(0, None, None, None, None))
         return Mnfw
 
@@ -382,7 +383,7 @@ class BCM_18_wP:
         logx = jnp.linspace(jnp.log(minr), jnp.log(r), self.num_points_trapz_int)
         # x = jnp.exp(logx)
         # fx = (vmap(self.get_rho_cga, (0, None, None, None,None))(jnp.arange(len(logx)), jc, jz, jM, x))*(4*jnp.pi*x**2) * x
-        # Mcga = jnp.trapz(fx, x=logx)
+        # Mcga = jsi.trapezoid(fx, x=logx)
         Mcga = self.logspace_trapezoidal_integral(self.get_rho_cga, logx, jc=jc, jz=jz, jM=jM, axis_tup=(0, None, None, None, None))
         return Mcga
 
@@ -427,7 +428,7 @@ class BCM_18_wP:
         logx = jnp.linspace(jnp.log(0.01*r200c), jnp.log(rmax_r200c*r200c), self.num_points_trapz_int)
         # x = jnp.exp(logx)
         # fx = (vmap(self.get_rho_gas_unnorm, (0, None, None,None))(jnp.arange(len(logx)), jz, jM, x))*(4*jnp.pi*x**2) * x
-        # int_unnorm_prof = jnp.trapz(fx, x=logx)
+        # int_unnorm_prof = jsi.trapezoid(fx, x=logx)
         int_unnorm_prof = self.logspace_trapezoidal_integral(self.get_rho_gas_unnorm, logx, jc=None, jz=jz, jM=jM, axis_tup=(0, None, None, None))
         rho_gas_norm = self.fgas_array[jM] * self.Mtot_mat[jc, jz, jM] / int_unnorm_prof
         return rho_gas_norm
@@ -458,7 +459,7 @@ class BCM_18_wP:
         logx = jnp.linspace(jnp.log(minr), jnp.log(r), self.num_points_trapz_int)
         # x = jnp.exp(logx)
         # fx = (vmap(self.get_rho_gas_normed, (0, None, None, None,None))(jnp.arange(len(logx)), jc, jz, jM, x))*(4*jnp.pi*x**2) * x
-        # Mgas = jnp.trapz(fx, x=logx)
+        # Mgas = jsi.trapezoid(fx, x=logx)
         Mgas = self.logspace_trapezoidal_integral(self.get_rho_gas_normed, logx, jc=jc, jz=jz, jM=jM, axis_tup=(0, None, None, None, None))
         return Mgas
 
@@ -522,7 +523,7 @@ class BCM_18_wP:
         logx = jnp.linspace(jnp.log(minr), jnp.log(r), self.num_points_trapz_int)
         # x = jnp.exp(logx)
         # fx = (vmap(self.get_rho_dmb, (0, None, None, None,None))(jnp.arange(len(logx)), jc, jz, jM, x))*(4*jnp.pi*x**2) * x
-        # Mdmb = jnp.trapz(fx, x=logx)
+        # Mdmb = jsi.trapezoid(fx, x=logx)
         Mdmb = self.logspace_trapezoidal_integral(self.get_rho_dmb, logx, jc=jc, jz=jz, jM=jM, axis_tup=(0, None, None, None, None))
         return Mdmb
 
@@ -542,7 +543,7 @@ class BCM_18_wP:
         # fx2 = (vmap(self.get_Mdmb, (0, None, None, None,None))(jnp.arange(len(logx)), jc, jz, jM, x))
         fx2 = jnp.interp(logx, jnp.log(self.r_array), self.Mdmb_mat[:,jc, jz, jM])
         fx = (fx1 * fx2 * G_new / x**2) * x
-        Ptot = jnp.trapz(fx, x=logx)
+        Ptot = jsi.trapezoid(fx, x=logx)
         Ptot = jnp.clip(Ptot, 1e-30)* (self.cosmo_jax.h)**2
         return Ptot
     
